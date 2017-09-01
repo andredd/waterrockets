@@ -97,6 +97,8 @@ void setup() {
 	Serial.begin(9600);
 
 	bmpOk = bmp.begin();
+  Serial.print("BMP: ");
+  Serial.println(bmpOk);
 }
 
 void launchRecover() {

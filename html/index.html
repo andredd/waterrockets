@@ -42,8 +42,8 @@ body {
 	};
 
 	connection.onmessage = function(e) {
-		tabulate(new Array(JSON.parse(e.data)), ['time', 'Countdown', 'Timer', 
-			'Fallschirm aktiv', 'Fallhöhe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug'])
+		processData(new Array(JSON.parse(e.data)), ['time', 'Countdown', 'Timer', 
+			'Fallschirm aktiv', 'Fallhöhe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug']);
 	};
 
 	var limit = 60 * 1, duration = 750, now = new Date(Date.now() - duration)
@@ -53,21 +53,36 @@ body {
 	var tbody;
 
 	var groups = {
-		current : {
+		'Fallhöhe' : {
 			value : 0,
 			color : 'orange',
 			data : d3.range(limit).map(function() {
 				return 0
 			})
 		},
-		target : {
+		'Alt' : {
 			value : 0,
 			color : 'green',
 			data : d3.range(limit).map(function() {
 				return 0
 			})
 		},
-		output : {
+		'Ref Alt' : {
+			value : 0,
+			color : 'green',
+			data : d3.range(limit).map(function() {
+				return 0
+			})
+		},
+		'Max Alt' : {
+			value : 0,
+			color : 'green',
+			data : d3.range(limit).map(function() {
+				return 0
+			})
+		},
+		
+		'H' : {
 			value : 0,
 			color : 'grey',
 			data : d3.range(limit).map(function() {
@@ -79,7 +94,7 @@ body {
 	var x = d3.scaleTime().domain([ now - (limit - 2), now - duration ]).range(
 			[ 0, width ])
 
-	var y = d3.scaleLinear().domain([ 0, 100 ]).range([ height, 0 ])
+	var y = d3.scaleLinear().domain([ 95, 105 ]).range([ height, 0 ])
 
 	var line = d3.line().curve(d3.curveBasis).x(function(d, i) {
 		return x(now - (limit - 1 - i) * duration)
@@ -115,15 +130,25 @@ body {
 				name + ' group').style('stroke', group.color)
 	}
 
-	function tick() {
+	function processData(data)
+	{
+		tabulate(data, ['time', 'Countdown', 'Timer', 
+			'Fallschirm aktiv', 'Fallhöhe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug']);	
+		addChartData(data)
+	}
+	
+	function addChartData(data) {
 		now = new Date()
 
 		// Add new values
-		for ( var name in groups) {
-			var group = groups[name]
-			//group.data.push(group.value) // Real values arrive at irregular intervals
-			group.data.push(Math.random() * 100)
-			group.path.attr('d', line)
+		for( val in data)
+		{
+			for ( var name in groups) {
+				var group = groups[name];
+				//group.data.push(group.value) // Real values arrive at irregular intervals
+				group.data.push(data[val][name]);
+				group.path.attr('d', line);
+			}
 		}
 
 		// Shift domain
@@ -138,7 +163,7 @@ body {
 		paths.attr('transform', null).transition().duration(duration).attr(
 				'transform',
 				'translate(' + x(now - (limit - 1) * duration) + ')').ease(
-				d3.easeLinear).on('end', tick)
+				d3.easeLinear);
 
 		// Remove oldest data point from each group
 		for ( var name in groups) {
