@@ -1,0 +1,189 @@
+<script type="text/javascript" src="lib/d3/v4/d3.js"></script>
+<div class="graph"></div>
+<div id="container"></div>
+
+<style>
+body {
+	font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.graph .axis {
+	stroke-width: 1;
+}
+
+.graph .axis .tick line {
+	stroke: black;
+}
+
+.graph .axis .tick text {
+	fill: black;
+	font-size: 0.7em;
+}
+
+.graph .axis .domain {
+	fill: none;
+	stroke: black;
+}
+
+.graph .group {
+	fill: none;
+	stroke: black;
+	stroke-width: 1.5;
+}
+</style>
+
+<script type="text/javascript">
+	var limit = 60 * 1, duration = 750, now = new Date(Date.now() - duration)
+
+	var width = 800, height = 500
+
+	var tbody;
+
+	var groups = {
+		current : {
+			value : 0,
+			color : 'orange',
+			data : d3.range(limit).map(function() {
+				return 0
+			})
+		},
+		target : {
+			value : 0,
+			color : 'green',
+			data : d3.range(limit).map(function() {
+				return 0
+			})
+		},
+		output : {
+			value : 0,
+			color : 'grey',
+			data : d3.range(limit).map(function() {
+				return 0
+			})
+		}
+	}
+
+	var x = d3.scaleTime().domain([ now - (limit - 2), now - duration ]).range(
+			[ 0, width ])
+
+	var y = d3.scaleLinear().domain([ 0, 100 ]).range([ height, 0 ])
+
+	var line = d3.line().curve(d3.curveBasis).x(function(d, i) {
+		return x(now - (limit - 1 - i) * duration)
+	}).y(function(d) {
+		return y(d)
+	})
+
+	var svg = d3.select('.graph').append('svg').attr('class', 'chart').attr(
+			'width', width).attr('height', height + 50);
+
+			
+	var margin = {top: 0, right: 0, bottom: 20, left: 40},
+    	width = +svg.attr("width") - margin.left - margin.right,
+    	height = +svg.attr("height") - margin.top - margin.bottom;
+	
+    g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+	
+	axis = g.append("g").attr("class", "axis axis--x").attr("transform",
+			"translate(0," + height + ")").call(d3.axisBottom(x));
+
+	g.append("g").attr("class", "axis axis--y").call(d3.axisLeft(y));
+
+	var paths = svg.append('g')
+
+	for ( var name in groups) {
+		var group = groups[name]
+		group.path = paths.append('path').data([ group.data ]).attr('class',
+				name + ' group').style('stroke', group.color)
+	}
+
+	function tick() {
+		now = new Date()
+
+		// Add new values
+		for ( var name in groups) {
+			var group = groups[name]
+			//group.data.push(group.value) // Real values arrive at irregular intervals
+			group.data.push(Math.random() * 100)
+			group.path.attr('d', line)
+		}
+
+		// Shift domain
+		x.domain([ now - (limit - 2) * duration, now - duration ])
+
+		// Slide x-axis left
+		axis.transition().duration(duration).ease(d3.easeLinear).call(
+				d3.axisBottom(x));
+
+		// Slide paths left
+
+		paths.attr('transform', null).transition().duration(duration).attr(
+				'transform',
+				'translate(' + x(now - (limit - 1) * duration) + ')').ease(
+				d3.easeLinear).on('end', tick)
+
+		// Remove oldest data point from each group
+		for ( var name in groups) {
+			var group = groups[name]
+			group.data.shift()
+		}
+	}
+
+	function tabulate(data, columns) {
+		var table = d3.select("#container").append("table"), thead = table
+				.append("thead");
+		tbody = table.append("tbody");
+
+		// append the header row
+		thead.append("tr").selectAll("th").data(columns).enter().append("th")
+				.text(function(column) {
+					return column;
+				});
+
+		// create a row for each object in the data
+		var rows = tbody.selectAll("tr").data(data).enter().append("tr");
+
+		// create a cell in each row for each column
+		var cells = rows.selectAll("td").data(function(row) {
+			return columns.map(function(column) {
+				return {
+					column : column,
+					value : row[column]
+				};
+			});
+		}).enter().append("td").text(function(d) {
+			return d.value;
+		});
+
+		return table;
+	}
+
+	tick();
+
+	// render the table
+	var peopleTable = tabulate(data, data.columns);
+
+	// uppercase the column headers
+	peopleTable.selectAll("thead th").text(function(column) {
+		return column.charAt(0).toUpperCase() + column.substr(1);
+	});
+
+	// sort by age
+	peopleTable.selectAll("tbody tr").sort(function(a, b) {
+		return d3.descending(a.age, b.age);
+	});
+
+	function updateData() {
+		tbody.selectAll("tr").data(newdata).selectAll("td").data(function(row) {
+			return data.columns.map(function(column) {
+				return {
+					column : column,
+					value : row[column]
+				};
+			});
+		}).text(function(d) {
+			return d.value;
+		});
+
+	}
+</script>
