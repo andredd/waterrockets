@@ -1,6 +1,11 @@
 <script type="text/javascript" src="lib/d3/v4/d3.js"></script>
 <div class="graph"></div>
 <div id="container"></div>
+<div id="controls">
+	<button type="button" id="btnReset" onclick="send('r')">Reset</button>
+	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
+	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
+</div>
 
 <style>
 body {
@@ -33,55 +38,62 @@ body {
 </style>
 
 <script type="text/javascript">
+	var mock = false;
 
-	var mock = true;
-	
-	function mockdata(){
-		dmock = [
-		         {
-		        	 'time': new Date(),
-		        	 //'Countdown': null,
-		        	 'Timer': 9, 
-					'Fallschirm aktiv': true,
-					'Fallhoehe': Math.random() * 10,
-					'Alt': 100 + (Math.random()-0.5) * 10,
-					'H': (Math.random()-0.5) * 10,
-					'Ref Alt': 100,
-					'Max Alt': 102 + (Math.random()-0.5) * 10,
-					'Altimeter': true,
-					'Flug': false
-					}
-		         ];
-		processData(dmock, ['time', 'Countdown', 'Timer', 
-             				'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug']);
+	function send(cmd) {
+		connection.send("#" + cmd);
+	};
+
+	function mockdata() {
+		dmock = [ {
+			'time' : new Date(),
+			//'Countdown': null,
+			'Timer' : 9,
+			'Fallschirm aktiv' : true,
+			'Fallhoehe' : Math.random() * 10,
+			'Alt' : 100 + (Math.random() - 0.5) * 10,
+			'H' : (Math.random() - 0.5) * 10,
+			'Ref Alt' : 100,
+			'Max Alt' : 102 + (Math.random() - 0.5) * 10,
+			'Altimeter' : true,
+			'Flug' : false
+		} ];
+		processData(dmock, [ 'time', 'Countdown', 'Timer', 'Fallschirm aktiv',
+				'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter',
+				'Flug' ]);
 	}
-	
-	if( !mock)
-	{
-		var connection = new WebSocket('ws://192.168.178.34:81', [ 'arduino' ]);
+
+	if (!mock) {
+		var connection = new WebSocket('ws://192.168.4.1:81', [ 'arduino' ]);
 		connection.onopen = function() {
 			connection.send('Connect ' + new Date());
 		};
 		connection.onerror = function(error) {
 			console.log('WebSocket Error ', error);
 		};
-	
+
 		connection.onmessage = function(e) {
-			processData(new Array(JSON.parse(e.data)), ['time', 'Countdown', 'Timer', 
-				'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug']);
+			msg = JSON.parse(e.data);
+			if (msg['status'] == 'event') {
+				console.log(msg['message']);
+			} else {
+				processData(new Array(msg), [ 'time', 'Countdown', 'Timer',
+						'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt',
+						'Max Alt', 'Altimeter', 'Flug' ]);
+			}
 		};
-	} else
-	{
-		setInterval(mockdata, 500)	
+	} else {
+		setInterval(mockdata, 500)
 	}
-	
-	
-	var startDate = Date.now();
+
+	var startDate =0;
 
 	var width = 800, height = 500
 
 	var tbody;
 
+	var t0 = -1;
+	
 	var groups = {
 		'Fallhoehe' : {
 			value : 0,
@@ -92,20 +104,20 @@ body {
 			value : 0,
 			color : 'green',
 			data : new Array()
-			
+
 		},
 		'Ref Alt' : {
 			value : 0,
 			color : 'blue',
 			data : new Array()
-			
+
 		},
 		'Max Alt' : {
 			value : 0,
 			color : 'black',
 			data : new Array()
 		},
-		
+
 		'H' : {
 			value : 0,
 			color : 'grey',
@@ -114,9 +126,6 @@ body {
 	}
 	var times = Array();
 
-	
-
-	
 	var svg = d3.select('.graph').append('svg').attr('class', 'chart').attr(
 			'width', width).attr('height', height + 50);
 
@@ -129,8 +138,9 @@ body {
 			.attr("height")
 			- margin.top - margin.bottom;
 
-	var x = d3.scaleTime().domain([ startDate, startDate + 60000 ]).range([ margin.left, width-margin.left ])
-	var y = d3.scaleLinear().domain([ 95, 105 ]).range([ height, 0 ])
+	var x = d3.scaleLinear().domain([ 0, 10000 ]).range(
+			[ margin.left, width - margin.left ])
+	var y = d3.scaleLinear().domain([ -1, 3 ]).range([ height, 0 ])
 
 	var line = d3.line().curve(d3.curveBasis).x(function(d) {
 		return x(d[1])
@@ -143,7 +153,8 @@ body {
 			"translate(0," + height + ")").call(d3.axisBottom(x));
 
 	g.append("g").attr("class", "axis axis--y").attr("transform",
-			"translate(" + margin.left + "," + margin.top + ")").call(d3.axisLeft(y));
+			"translate(" + margin.left + "," + margin.top + ")").call(
+			d3.axisLeft(y));
 
 	var paths = svg.append('g')
 
@@ -153,40 +164,40 @@ body {
 				name + ' group').style('stroke', group.color)
 	}
 
-	function processData(data)
-	{
-		tabulate(data, ['time', 'Countdown', 'Timer', 
-			'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter', 'Flug']);
+	function processData(data) {
+		tabulate(data, [ 'time', 'Countdown', 'Timer', 'Fallschirm aktiv',
+				'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter',
+				'Flug' ]);
 		addChartData(data)
 	}
 
 	function addChartData(data) {
-		now = new Date()
-
+	
 		// Add new values
-		for( val in data)
-		{
+		var time = 0;
+		for (val in data) {
 			for ( var name in groups) {
 				var group = groups[name];
 				//group.data.push(group.value) // Real values arrive at irregular intervals
-				group.data.push([data[val][name], data[val].time]);
+				group.data.push([ data[val][name], data[val].time ]);
 				group.path.attr('d', line);
+				if( data[val].time > time ) time = data[val].time;
 			}
 		}
-
+		if( t0 < 0 ) t0 = time; 
+			
 		// Shift domain
 		//x.domain([ now - (limit - 2) * duration, now - duration ])
-		//x.domain([startDate - 500, now + 500])
+		x.domain([t0, time + 2000])
 
-		
 		// Slide x-axis left
-		//axis.call(d3.axisBottom(x));
+		axis.call(d3.axisBottom(x));
 
 		// Slide paths left
 		/*paths.attr('transform', null).attr(
 				'transform',
 				'translate(' + x(now - (limit - 1) * duration) + ')');
-*/
+		 */
 		// Remove oldest data point from each group
 		for ( var name in groups) {
 			var group = groups[name]
@@ -223,5 +234,4 @@ body {
 
 		return table;
 	}
-
 </script>
