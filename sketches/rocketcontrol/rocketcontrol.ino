@@ -21,8 +21,8 @@
 #define RECOVER_MINALT 0.5
 #define RECOVER_LAUNCH 1.0
 
-#define SAMPLING_TIME 50
-#define COMM_TIME 500
+#define SAMPLING_TIME_BMP 50
+#define COMM_TIME 200
 
 Adafruit_BMP280 bmp; // I2C
 
@@ -35,8 +35,9 @@ int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 0;
 unsigned long remTime = 100000;
 unsigned long startCountdownAt = 0;
-unsigned long lastComm = 0;
+unsigned long lastComm = 0, lastSampleBmp = 0;
 unsigned long liftOffAt = 0;
+unsigned long currentMillis = 0;
 float aRef = 0, aMax = 0, curAlt = 0, aMean = 0;
 bool recoverActive = false;
 bool bmpOk = false;
@@ -158,9 +159,36 @@ void onTextCommand(char cmd){
     }
 }
 
-void doControl() {
+void sampleBmp(){
+  if( lastSampleBmp + SAMPLING_TIME_BMP > currentMillis ) return;
 
-	unsigned long currentMillis = millis();
+  lastSampleBmp = currentMillis;
+
+  altShortBuf.addVal(bmp.readAltitude(1017.25));
+  aMean = altShortBuf.getMean();
+  curAlt = aMean - aRef;
+
+  if (curAlt > aMax)
+    aMax = curAlt;
+
+  if (startCountdownAt <= 0) {
+    altRefBuf.addVal(aMean);
+    aRef = altRefBuf.getMean();
+    aMax = 0;
+  }
+
+  if ((startCountdownAt > 0) && (flightBufPos >= 0)) {
+    //altFlightBuf.addVal((double)(millis() - startCountdownAt) / 1000);
+    flightBufPos = altFlightBuf.addVal(curAlt);
+    if (flightBufPos == altFlightBuf.getSize() - 1) {
+      flightBufPos = -1;
+    }
+  }
+
+}
+  
+void doControl() {
+	currentMillis = millis();
 
 	webSocket.loop();
 
@@ -170,44 +198,24 @@ void doControl() {
 		launchRecover();
 	}
 
-	delay(SAMPLING_TIME);
-
-	altShortBuf.addVal(bmp.readAltitude(1017.25));
-	aMean = altShortBuf.getMean();
-	curAlt = aMean - aRef;
+  sampleBmp();
+	
 	if (!recoverActive && startCountdownAt > 0 && curAlt > RECOVER_MINALT) {
 		recoverActive = true;
-		Serial.print("Activate recover");
+		notifyClient("Activate recover");
 	}
 
 	if (recoverActive && curAlt < aMax - RECOVER_LAUNCH) {
 		launchRecover();
 	}
 
-	if (curAlt > aMax)
-		aMax = curAlt;
-
-	if (startCountdownAt <= 0) {
-		altRefBuf.addVal(aMean);
-		aRef = altRefBuf.getMean();
-		aMax = 0;
-	}
-
 	if (aMax > 0.2) {
 		liftOff = true;
-		liftOffAt = millis();
+		liftOffAt = currentMillis;
 	}
 
-	if ((startCountdownAt > 0) && (flightBufPos >= 0)) {
-		//altFlightBuf.addVal((double)(millis() - startCountdownAt) / 1000);
-		flightBufPos = altFlightBuf.addVal(curAlt);
-		if (flightBufPos == altFlightBuf.getSize() - 1) {
-			flightBufPos = -1;
-		}
-	}
-
-	if (millis() - lastComm > COMM_TIME) {
-		lastComm = millis();
+	if (currentMillis - lastComm > COMM_TIME) {
+		lastComm = currentMillis;
 
 		sendDataToClient();
 	}
@@ -218,7 +226,7 @@ void loop() {
 	if (checkWiFi()) {
 		doControl();
 	} else {
-		delay(5000);
+		delay(2000);
 	}
 
 }
