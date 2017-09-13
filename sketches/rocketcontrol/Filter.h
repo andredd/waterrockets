@@ -1,48 +1,70 @@
 template <typename T>
 class SimpleBuffer {
-	T* buffer;
-	int pos;
-	int size;
-	double mean;
-public:
-  SimpleBuffer(int size){
-	  buffer = new T[size];
-	  this->size = size;
-	  reset();
-  }
-  
-  ~SimpleBuffer(){
-	  delete[] buffer;
-  }
+  protected:
+    T* buffer;
+    int pos;
+    int size;
+  public:
 
-  int addVal(T val){
-  	int wrPos = pos;
-  	this->buffer[pos] = val;
-  	pos++;
-  	if( pos >= size)
-  		pos = 0;
-  	mean = (mean * (size-1) + val) / size;
-  	return wrPos;
-  }
+    SimpleBuffer(int size) {
+      buffer = new T[size];
+      this->size = size;
+      reset();
+    }
 
-  T getVal(int pos){
-  	return this->buffer[pos];
-  }
+    ~SimpleBuffer() {
+      delete[] buffer;
+    }
 
-  double getMean(){
-  	return mean;
-  }
+    int addVal(T val) {
+      int wrPos = pos;
+      this->buffer[pos] = val;
+      pos++;
+      if ( pos >= size)
+        pos = 0;
 
-  int getSize(){
-  	return size;
-  }
+      return wrPos;
 
-  void reset(){
-  	for( int i=0; i<size; i++)
-  	{
-  		buffer[i] = 0;
-  	}
-  	pos = 0;
-  	mean = 0;
-  }
+    }
+
+    T getVal(int pos) {
+      return this->buffer[pos];
+    }
+
+    int getSize() {
+      return size;
+    }
+
+    void reset() {
+      memset(buffer, 0, sizeof(buffer));
+      pos = 0;
+    }
+};
+
+template <typename R>
+class RollMeanBuffer: public SimpleBuffer<R>
+{
+  private:
+    double mean;
+
+  public:
+    RollMeanBuffer(int size) : SimpleBuffer<R>(size){
+      mean = 0;
+    }
+
+    double getMean() {
+      return mean;
+    }
+
+    void reset() {
+      SimpleBuffer<R>::reset();
+      mean = 0;
+    }
+
+    int addVal(R val)
+    {
+      int res = SimpleBuffer<R>::addVal(val);
+      mean = (mean * (this->size - 1) + val) / this->size;
+      return res;
+    }
 };

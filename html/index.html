@@ -5,6 +5,7 @@
 	<button type="button" id="btnReset" onclick="send('r')">Reset</button>
 	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
 	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
+	<button type="button" id="btnGetLog" onclick="send('f')">Get Log</button>
 </div>
 
 <style>
@@ -73,27 +74,19 @@ body {
 		};
 
 		connection.onmessage = function(e) {
-			console.log(e.data);
-			return;
+			if( e.data[0]!='{'){
+				console.log(e.data);
+				return;
+			} else {
 			msg = JSON.parse(e.data);
 			if (msg['status'] == 'event') {
 				console.log(msg['message']);
 			} else {
-/*
-root["yaw"] = ypr[0] * 180/M_PI;
-  root["pitch"] = ypr[1] * 180/M_PI;
-  root["roll"] = ypr[2] * 180/M_PI;
-  root["areal.x"] = aaReal.x;
-  root["areal.y"] = aaReal.y;
-  root["areal.z"] = aaReal.z;
-  root["aworld.x"] = aaWorld.x;
-  root["aworld.y"] = aaWorld.y;
-  root["aworld.z"] = aaWorld.z;
-*/
-				processData(new Array(msg), [ 'time', 'Countdown', 'Timer',
-						'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt',
-						'Max Alt', 'Altimeter', 'Flug', 'yaw', 'pitch', 'roll', 'aworld.x', 'aworld.y', 'aworld.z']);
+				processData(new Array(msg), [ 'time', 'yaw', 'pitch',
+						'roll', 'areal.x', 'areal.y', 'areal.z', 'maxAlt',
+						'curAlt']);
 			}
+}
 		};
 	} else {
 		setInterval(mockdata, 500)
