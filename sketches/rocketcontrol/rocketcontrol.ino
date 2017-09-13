@@ -3,11 +3,12 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP280.h>
-#include <ArduinoJson.h>
+//#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <WebSocketsServer.h>
 #include <ESP8266mDNS.h>
 #include <Hash.h>
+#include "MPU6050_6Axis_MotionApps20.h"
 
 #include "Filter.h"
 
@@ -22,17 +23,45 @@
 #define RECOVER_LAUNCH 1.0
 
 #define SAMPLING_TIME_BMP 50
-#define COMM_TIME 200
+#define COMM_TIME 9999999
+
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
+
+SimpleBuffer<int16_t> bufAx(20),
+  bufAy(20),
+  bufAz(20),
+  bufgx(20),
+  bufgy(20),
+  bufgz(20);
+
+  /*
+int MPU6050_ACCEL_OFFSET_X = -3009,
+  MPU6050_ACCEL_OFFSET_Y = -4149,
+  MPU6050_ACCEL_OFFSET_Z = 1536,
+  MPU6050_GYRO_OFFSET_X  = 74,
+  MPU6050_GYRO_OFFSET_Y  = -24,
+  MPU6050_GYRO_OFFSET_Z = 34;
+*/
+int MPU6050_ACCEL_OFFSET_X = 0,
+  MPU6050_ACCEL_OFFSET_Y = 0,
+  MPU6050_ACCEL_OFFSET_Z = 0,
+  MPU6050_GYRO_OFFSET_X  = 0,
+  MPU6050_GYRO_OFFSET_Y  = 0,
+  MPU6050_GYRO_OFFSET_Z = 0;
+
+
+#define INTERRUPT_PIN 13  // use pin 2 on Arduino Uno & most boards
 
 Adafruit_BMP280 bmp; // I2C
-
+MPU6050 mpu;
 Servo myservo;  // create servo object to control a servo
-FloatBuffer altRefBuf(10);
-FloatBuffer altShortBuf(5);
-FloatBuffer altFlightBuf(200);
+SimpleBuffer<float> altRefBuf(10),
+  altShortBuf(5),
+  altFlightBuf(200);
 
 int wifiStatus = WL_DISCONNECTED;
-int aktuellZaehler = 0;
+int aktuellZaehler = 9;
 unsigned long remTime = 100000;
 unsigned long startCountdownAt = 0;
 unsigned long lastComm = 0, lastSampleBmp = 0;
@@ -49,9 +78,32 @@ int flightBufPos = 0;
 
 const char WiFiAPPSK[] = "sparkfun";
 
-char *charBuffer = new char[200];
+char *charBuffer = new char[100];
 
 WebSocketsServer webSocket = WebSocketsServer(81);
+
+// MPU control/status vars
+bool dmpReady = false;  // set true if DMP init was successful
+uint8_t mpuIntStatus;   // holds actual interrupt status byte from MPU
+uint8_t devStatus;      // return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // expected DMP packet size (default is 42 bytes)
+uint16_t fifoCount;     // count of all bytes currently in FIFO
+uint8_t fifoBuffer[64]; // FIFO storage buffer
+
+// orientation/motion vars
+Quaternion q;           // [w, x, y, z]         quaternion container
+VectorInt16 aa;         // [x, y, z]            accel sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
+float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
+bool blinkState = false;
+
+volatile bool mpuInterrupt = false;     // indicates whether MPU interrupt pin has gone high
+void dmpDataReady() {
+    mpuInterrupt = true;
+}
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
 		size_t length) {
@@ -80,13 +132,16 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
 
 void setup() {
 
-  Serial.begin(9600);
+  Serial.begin(38400);
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, 0);
   doBlink(2, 300);
 	myservo.attach(servoPin); // attaches the servo on pin 9 to the servo object
 
+  // vorsichtshalber nach reboot auslösen
+  launchRecover();
+  
 	bmpOk = bmp.begin();
   Serial.print("BMP: ");
   Serial.println(bmpOk);
@@ -94,6 +149,125 @@ void setup() {
     doBlink(1, 300);
   else
     doBlink(3, 300);
+
+  initMpu();
+}
+
+void calibrateMpu(){
+    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+    bufAx.addVal(ax);
+    bufAy.addVal(ay);
+    bufAz.addVal(az);
+
+    bufgx.addVal(gx);
+    bufgy.addVal(gy);
+    bufgz.addVal(gz);
+
+    Serial.print(bufAx.getMean());
+    Serial.print(", ");
+    Serial.print(bufAy.getMean());
+    Serial.print(", ");
+    Serial.print(bufAz.getMean());
+    Serial.print(", ");
+    Serial.print(bufgx.getMean());
+    Serial.print(", ");
+    Serial.print(bufgy.getMean());
+    Serial.print(", ");
+    Serial.println(bufgz.getMean());
+
+    double corr = -bufAx.getMean();
+    if( corr < -1 || corr > 1){
+      MPU6050_ACCEL_OFFSET_X += (corr > 0 ? 1 : -1);
+      mpu.setXAccelOffset(MPU6050_ACCEL_OFFSET_X);
+    }
+
+    corr = -bufAy.getMean();
+    if( corr < -1 || corr > 1) {
+      MPU6050_ACCEL_OFFSET_Y += (corr > 0 ? 1 : -1);
+      mpu.setYAccelOffset(MPU6050_ACCEL_OFFSET_Y);
+    }
+
+    corr = -bufAz.getMean();
+    if( corr < -1 || corr > 1) {
+      MPU6050_ACCEL_OFFSET_Z += (corr > 0 ? 1 : -1);
+      mpu.setZAccelOffset(MPU6050_ACCEL_OFFSET_Z);
+    }
+
+    corr = -bufgx.getMean();
+    if( corr < -1 || corr > 1) {
+      MPU6050_GYRO_OFFSET_X += (corr > 0 ? 1 : -1);
+      mpu.setXGyroOffset(MPU6050_GYRO_OFFSET_X);
+    }
+    corr = -bufgy.getMean();
+    if( corr < -1 || corr > 1) {
+      MPU6050_GYRO_OFFSET_Y += (corr > 0 ? 1 : -1);
+      mpu.setYGyroOffset(MPU6050_GYRO_OFFSET_Y);
+    }
+    corr = -bufgz.getMean();
+    if( corr < -1 || corr > 1) {
+      MPU6050_GYRO_OFFSET_Z += (corr > 0 ? 1 : -1);
+      mpu.setZGyroOffset(MPU6050_GYRO_OFFSET_Z);
+    }
+}
+  
+  
+void initMpu(){
+    mpu.initialize();
+    pinMode(INTERRUPT_PIN, INPUT);
+
+    // verify connection
+    Serial.println(F("Testing device connections..."));
+    if( mpu.testConnection())
+    {
+      doBlink(5, 300);
+      delay(2000);
+      Serial.println(F("MPU6050 connection successful"));
+    }
+    else {
+      doBlink(1, 300);
+      delay(2000);
+      Serial.println(F("MPU6050 connection failed"));
+    }
+
+    // load and configure the DMP
+    Serial.println(F("Initializing DMP..."));
+    devStatus = mpu.dmpInitialize();
+
+    // supply your own gyro offsets here, scaled for min sensitivity
+    mpu.setXAccelOffset(MPU6050_ACCEL_OFFSET_X);
+    mpu.setYAccelOffset(MPU6050_ACCEL_OFFSET_Y);
+    mpu.setZAccelOffset(MPU6050_ACCEL_OFFSET_Z);
+    mpu.setXGyroOffset(MPU6050_GYRO_OFFSET_X);
+    mpu.setYGyroOffset(MPU6050_GYRO_OFFSET_Y);
+    mpu.setZGyroOffset(MPU6050_GYRO_OFFSET_Z);
+    
+    // make sure it worked (returns 0 if so)
+    if (devStatus == 0) {
+        // turn on the DMP, now that it's ready
+        Serial.println(F("Enabling DMP..."));
+        mpu.setDMPEnabled(true);
+
+        // enable Arduino interrupt detection
+        Serial.println(F("Enabling interrupt detection (Arduino external interrupt 0)..."));
+        attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+        mpuIntStatus = mpu.getIntStatus();
+
+        // set our DMP Ready flag so the main loop() function knows it's okay to use it
+        Serial.println(F("DMP ready! Waiting for first interrupt..."));
+        dmpReady = true;
+
+        // get expected DMP packet size for later comparison
+        packetSize = mpu.dmpGetFIFOPacketSize();
+    } else {
+        // ERROR!
+        // 1 = initial memory load failed
+        // 2 = DMP configuration updates failed
+        // (if it's going to break, usually the code will be 1)
+        Serial.print(F("DMP Initialization failed (code "));
+        Serial.print(devStatus);
+        Serial.println(F(")"));
+    }
+
 }
 
 void launchRecover() {
@@ -186,6 +360,64 @@ void sampleBmp(){
   }
 
 }
+
+void processMpu(){
+      // if programming failed, don't try to do anything
+    if (!dmpReady) return;
+
+    if( !mpuInterrupt && fifoCount < packetSize) return;
+    
+    // reset interrupt flag and get INT_STATUS byte
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
+
+    // get current FIFO count
+    fifoCount = mpu.getFIFOCount();
+
+    // check for overflow (this should never happen unless our code is too inefficient)
+    if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
+        // reset so we can continue cleanly
+        mpu.resetFIFO();
+        Serial.println(F("FIFO overflow!"));
+
+    // otherwise, check for DMP data ready interrupt (this should happen frequently)
+    } else if (mpuIntStatus & 0x02) {
+        // wait for correct available data length, should be a VERY short wait
+        while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
+        // read a packet from FIFO
+        mpu.getFIFOBytes(fifoBuffer, packetSize);
+        
+        // track FIFO count here in case there is > 1 packet available
+        // (this lets us immediately read more without waiting for an interrupt)
+        fifoCount -= packetSize;
+
+        if( !liftOff ){
+          calibrateMpu();
+        } else 
+        {
+            // display initial world-frame acceleration, adjusted to remove gravity
+            // and rotated based on known orientation from quaternion
+            mpu.dmpGetQuaternion(&q, fifoBuffer);
+            mpu.dmpGetAccel(&aa, fifoBuffer);
+            mpu.dmpGetGravity(&gravity, &q);
+            mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+            mpu.dmpGetLinearAccel(&aaReal, &aa, &gravity);
+            mpu.dmpGetLinearAccelInWorld(&aaWorld, &aaReal, &q);
+
+                 Serial.print(aaReal.x);
+        Serial.print(", ");
+        Serial.print(aaReal.y);
+        Serial.print(", ");
+        Serial.println(aaReal.z);
+    
+        }
+    }
+
+    // blink LED to indicate activity
+    blinkState = !blinkState;
+    digitalWrite(LED_PIN, blinkState);
+  }
   
 void doControl() {
 	currentMillis = millis();
@@ -199,7 +431,7 @@ void doControl() {
 	}
 
   sampleBmp();
-	
+
 	if (!recoverActive && startCountdownAt > 0 && curAlt > RECOVER_MINALT) {
 		recoverActive = true;
 		notifyClient("Activate recover");
@@ -214,6 +446,8 @@ void doControl() {
 		liftOffAt = currentMillis;
 	}
 
+  processMpu();
+  
 	if (currentMillis - lastComm > COMM_TIME) {
 		lastComm = currentMillis;
 
@@ -226,6 +460,7 @@ void loop() {
 	if (checkWiFi()) {
 		doControl();
 	} else {
+    doBlink(2, 500);
 		delay(2000);
 	}
 
@@ -235,7 +470,8 @@ void sendDataToClient() {
 
 	long remMillis = startCountdownAt + aktuellZaehler * 1000 - millis();
 
-	StaticJsonBuffer < 200 > jsonBuffer;
+/*
+	StaticJsonBuffer < 100 > jsonBuffer;
 	JsonObject& root = jsonBuffer.createObject();
 	root["time"] = millis();
 
@@ -251,23 +487,31 @@ void sendDataToClient() {
 	root["H"] = curAlt;
 	root["Ref Alt"] = aRef;
 	root["Max Alt"] = aMax;
+  root["yaw"] = ypr[0] * 180/M_PI;
+  root["pitch"] = ypr[1] * 180/M_PI;
+  root["roll"] = ypr[2] * 180/M_PI;
+  root["areal.x"] = aaReal.x;
+  root["areal.y"] = aaReal.y;
+  root["areal.z"] = aaReal.z;
+  root["aworld.x"] = aaWorld.x;
+  root["aworld.y"] = aaWorld.y;
+  root["aworld.z"] = aaWorld.z;
 
-	size_t written = root.printTo(charBuffer, 200);
-	webSocket.broadcastTXT(charBuffer, written);
-
+	size_t written = root.printTo(charBuffer, 100);
+	webSocket.broadcastTXT(charBuffer, written);*/
+  webSocket.broadcastTXT("Hallo");
 }
 
 void notifyClient(const char msg[]) {
 
   Serial.println(msg);
-  StaticJsonBuffer < 200 > jsonBuffer;
+  /*StaticJsonBuffer < 200 > jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   root["status"] = "event";
   root["message"] = msg;
   
-  size_t written = root.printTo(charBuffer, 200);
-  webSocket.broadcastTXT(charBuffer, written);
-
+  size_t written = root.printTo(charBuffer, 200);*/
+  webSocket.broadcastTXT(msg);
 }
 
 void setupSockets() {
@@ -356,6 +600,8 @@ bool checkWiFi() {
 	if (wifiStatus == WL_CONNECTED)
 		return true;
 	bool res = setupWiFiAP();
+  Serial.println("Setup AP:  ");
+  Serial.print(res);
   Serial.print("IP Addr:  ");
   Serial.println(WiFi.localIP());
 

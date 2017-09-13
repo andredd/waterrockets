@@ -1,57 +1,48 @@
-class FloatBuffer {
-	float* buffer;
+template <typename T>
+class SimpleBuffer {
+	T* buffer;
 	int pos;
 	int size;
+	double mean;
 public:
-	FloatBuffer(int);
-	~FloatBuffer();
-	int addVal(float);
-	int getSize();
-	float getVal(int);
-	float getMean();
-	void reset();
+  SimpleBuffer(int size){
+	  buffer = new T[size];
+	  this->size = size;
+	  reset();
+  }
+  
+  ~SimpleBuffer(){
+	  delete[] buffer;
+  }
+
+  int addVal(T val){
+  	int wrPos = pos;
+  	this->buffer[pos] = val;
+  	pos++;
+  	if( pos >= size)
+  		pos = 0;
+  	mean = (mean * (size-1) + val) / size;
+  	return wrPos;
+  }
+
+  T getVal(int pos){
+  	return this->buffer[pos];
+  }
+
+  double getMean(){
+  	return mean;
+  }
+
+  int getSize(){
+  	return size;
+  }
+
+  void reset(){
+  	for( int i=0; i<size; i++)
+  	{
+  		buffer[i] = 0;
+  	}
+  	pos = 0;
+  	mean = 0;
+  }
 };
-
-FloatBuffer::FloatBuffer(int size){
-	buffer = new float[size];
-	this->size = size;
-	reset();
-}
-
-FloatBuffer::~FloatBuffer(){
-	delete[] buffer;
-}
-
-int FloatBuffer::addVal(float val){
-	int wrPos = pos;
-	this->buffer[pos] = val;
-	pos++;
-	if( pos >= size)
-		pos = 0;
-	return wrPos;
-}
-
-float FloatBuffer::getVal(int pos){
-	return this->buffer[pos];
-}
-
-float FloatBuffer::getMean(){
-	double sum = 0;
-	for( int i=0; i<size; i++)
-	{
-		sum += buffer[i];
-	}
-	return (float)(sum / size);
-}
-
-int FloatBuffer::getSize(){
-	return size;
-}
-
-void FloatBuffer::reset(){
-	for( int i=0; i<size; i++)
-	{
-		buffer[i] = 0;
-	}
-	pos = 0;
-}

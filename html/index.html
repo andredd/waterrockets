@@ -73,13 +73,26 @@ body {
 		};
 
 		connection.onmessage = function(e) {
+			console.log(e.data);
+			return;
 			msg = JSON.parse(e.data);
 			if (msg['status'] == 'event') {
 				console.log(msg['message']);
 			} else {
+/*
+root["yaw"] = ypr[0] * 180/M_PI;
+  root["pitch"] = ypr[1] * 180/M_PI;
+  root["roll"] = ypr[2] * 180/M_PI;
+  root["areal.x"] = aaReal.x;
+  root["areal.y"] = aaReal.y;
+  root["areal.z"] = aaReal.z;
+  root["aworld.x"] = aaWorld.x;
+  root["aworld.y"] = aaWorld.y;
+  root["aworld.z"] = aaWorld.z;
+*/
 				processData(new Array(msg), [ 'time', 'Countdown', 'Timer',
 						'Fallschirm aktiv', 'Fallhoehe', 'Alt', 'H', 'Ref Alt',
-						'Max Alt', 'Altimeter', 'Flug' ]);
+						'Max Alt', 'Altimeter', 'Flug', 'yaw', 'pitch', 'roll', 'aworld.x', 'aworld.y', 'aworld.z']);
 			}
 		};
 	} else {
@@ -167,7 +180,7 @@ body {
 	function processData(data) {
 		tabulate(data, [ 'time', 'Countdown', 'Timer', 'Fallschirm aktiv',
 				'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter',
-				'Flug' ]);
+				'Flug', 'yaw', 'pitch', 'roll', 'aworld.x', 'aworld.y', 'aworld.z' ]);
 		addChartData(data)
 	}
 
