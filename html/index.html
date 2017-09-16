@@ -82,9 +82,7 @@ body {
 			if (msg['status'] == 'event') {
 				console.log(msg['message']);
 			} else {
-				processData(new Array(msg), [ 'time', 'yaw', 'pitch',
-						'roll', 'areal.x', 'areal.y', 'areal.z', 'maxAlt',
-						'curAlt']);
+				processData(msg);
 			}
 }
 		};
@@ -101,30 +99,30 @@ body {
 	var t0 = -1;
 	
 	var groups = {
-		'Fallhoehe' : {
+		'yaw' : {
 			value : 0,
 			color : 'orange',
 			data : new Array()
 		},
-		'Alt' : {
+		'pitch' : {
 			value : 0,
 			color : 'green',
 			data : new Array()
 
 		},
-		'Ref Alt' : {
+		'roll' : {
 			value : 0,
 			color : 'blue',
 			data : new Array()
 
 		},
-		'Max Alt' : {
+		'maxAlt' : {
 			value : 0,
 			color : 'black',
 			data : new Array()
 		},
 
-		'H' : {
+		'curAlt' : {
 			value : 0,
 			color : 'grey',
 			data : new Array()
@@ -171,13 +169,11 @@ body {
 	}
 
 	function processData(data) {
-		tabulate(data, [ 'time', 'Countdown', 'Timer', 'Fallschirm aktiv',
-				'Fallhoehe', 'Alt', 'H', 'Ref Alt', 'Max Alt', 'Altimeter',
-				'Flug', 'yaw', 'pitch', 'roll', 'aworld.x', 'aworld.y', 'aworld.z' ]);
-		addChartData(data)
+		tabulate(data.data, data.cols);
+		addChartData(data.data, data.cols)
 	}
 
-	function addChartData(data) {
+	function addChartData(data, columns) {
 	
 		// Add new values
 		var time = 0;

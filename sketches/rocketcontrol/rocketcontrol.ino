@@ -8,9 +8,11 @@
 #include <WebSocketsServer.h>
 #include <ESP8266mDNS.h>
 #include <Hash.h>
-#include "MPU6050_6Axis_MotionApps20.h"
+#include <MPU6050_6Axis_MotionApps20.h>
 
 #include "Filter.h"
+
+#define SERIALSPEED 115200
 
 #define BMP_SCK 13
 #define BMP_MISO 12
@@ -45,11 +47,15 @@ int MPU6050_ACCEL_OFFSET_X = -3000,
 
 #define INTERRUPT_PIN 13  // use pin 2 on Arduino Uno & most boards
 
+const byte JsonPacketSize = 40;
+
 Adafruit_BMP280 bmp; // I2C
 MPU6050 mpu;
 Servo myservo;  // create servo object to control a servo
 RollMeanBuffer<float> altRefBuf(10),
                altShortBuf(5);
+
+unsigned long lastCommTime = 0;
 
 typedef struct FlightData
 {
@@ -63,7 +69,8 @@ typedef struct FlightData
 VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 FlightData currentFlightData;
 
-SimpleBuffer<FlightData> flightDataBuffer(1000);
+FlightData fd[1000];
+SimpleBuffer<FlightData> flightDataBuffer(fd, 1000);
 
 int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 9;
@@ -117,13 +124,14 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
         IPAddress ip = webSocket.remoteIP(num);
         USE_SERIAL.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num,
                           ip[0], ip[1], ip[2], ip[3], payload);
+        notifyClient("Hi!");
       }
       break;
     case WStype_TEXT:
       USE_SERIAL.printf("[%u] get Text: %s\n", num, payload);
 
       if (payload[0] == '#') {
-        onTextCommand(payload[1]);
+        onTextCommand(num, payload[1]);
       }
 
       break;
@@ -133,7 +141,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
 
 void setup() {
 
-  Serial.begin(38400);
+  Serial.begin(SERIALSPEED);
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, 0);
@@ -154,7 +162,7 @@ void setup() {
   initMpu();
 }
 
-void calibrateMpu() {
+double calibrateMpu() {
   int16_t ax, ay, az;
   int16_t gx, gy, gz;
 
@@ -168,38 +176,52 @@ void calibrateMpu() {
   bufgz.addVal(gz);
 
   double corr = -bufAx.getMean();
+  double sumCorr = corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_ACCEL_OFFSET_X += (corr > 0 ? 1 : -1);
     mpu.setXAccelOffset(MPU6050_ACCEL_OFFSET_X);
   }
 
   corr = -bufAy.getMean();
+  sumCorr += corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_ACCEL_OFFSET_Y += (corr > 0 ? 1 : -1);
     mpu.setYAccelOffset(MPU6050_ACCEL_OFFSET_Y);
   }
 
   corr = -bufAz.getMean();
+  sumCorr += corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_ACCEL_OFFSET_Z += (corr > 0 ? 1 : -1);
     mpu.setZAccelOffset(MPU6050_ACCEL_OFFSET_Z);
   }
 
   corr = -bufgx.getMean();
+  sumCorr += corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_GYRO_OFFSET_X += (corr > 0 ? 1 : -1);
     mpu.setXGyroOffset(MPU6050_GYRO_OFFSET_X);
   }
   corr = -bufgy.getMean();
+  sumCorr += corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_GYRO_OFFSET_Y += (corr > 0 ? 1 : -1);
     mpu.setYGyroOffset(MPU6050_GYRO_OFFSET_Y);
   }
   corr = -bufgz.getMean();
+  sumCorr += corr;
   if ( corr < -1 || corr > 1) {
     MPU6050_GYRO_OFFSET_Z += (corr > 0 ? 1 : -1);
     mpu.setZGyroOffset(MPU6050_GYRO_OFFSET_Z);
   }
+
+  if( millis() > lastCommTime + 500)
+  {
+    notifyClient(String("sum cali corr: ") + String(corr));
+    
+    lastCommTime = millis();
+  }
+  return sumCorr;
 }
 
 void setMpuInterruptEnabled(bool enabled){
@@ -277,7 +299,7 @@ void launchRecover() {
 
 void prepareLaunch() {
   setMpuInterruptEnabled(true);
-  
+
   notifyClient("prepareLaunch");
   startCountdownAt = millis();
   currentFlightData.maxAlt = 0;
@@ -295,35 +317,63 @@ void reset() {
   startCountdownAt = 0;
   recoverLaunched = false;
   liftOff = false;
+  setMpuInterruptEnabled(true);
 }
 
-void sendFlightBuf() {
+void sendFlightBuf(uint8_t num) {
 
   setMpuInterruptEnabled(false);
-  
-  const int bufSize = 500;
 
-  char *charBuffer = new char[bufSize];
+  const int bufSize = 1000;
 
-  for (int i = 0; i < flightDataBuffer.getSize(); i++) {
-    FlightData fd = flightDataBuffer.getVal(i);
+  int sent = 0;
+  char charBuffer[bufSize];
+    
+  while( sent < flightDataBuffer.getSize())
+  {
     StaticJsonBuffer < bufSize > jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
-    root["yaw"] = fd.ypr[0] * 180 / M_PI;
-    root["pitch"] = fd.ypr[1] * 180 / M_PI;
-    root["roll"] = fd.ypr[2] * 180 / M_PI;
-    root["areal.x"] = currentFlightData.aaReal.x;
-    root["areal.y"] = currentFlightData.aaReal.y;
-    root["areal.z"] = currentFlightData.aaReal.z;
-    root["time"] = currentFlightData.time;
-    root["maxAlt"] = currentFlightData.maxAlt;
-    root["curAlt"] = currentFlightData.curAlt;
-    size_t written = root.printTo(charBuffer, bufSize);
-    webSocket.broadcastTXT(charBuffer, written);
+
+    JsonArray& cols = root.createNestedArray("cols");
+    cols.add("yaw");
+    cols.add("pitch");
+    cols.add("roll");
+    cols.add("areal.x");
+    cols.add("areal.y");
+    cols.add("areal.z");
+    cols.add("time");
+    cols.add("maxAlt");
+    cols.add("curAlt");
+
+    JsonArray& data = root.createNestedArray("data");
+    int i = 0;
+    for (i = 0; i < JsonPacketSize; i++) {
+      if( sent + i >= flightDataBuffer.getSize() ) break;
+
+      JsonArray& line = data.createNestedArray();
+      FlightData fd = flightDataBuffer.getVal(sent + i);
+      line.add(fd.ypr[0]);
+      line.add(fd.ypr[1]);
+      line.add(fd.ypr[2]);
+      line.add(currentFlightData.aaReal.x);
+      line.add(currentFlightData.aaReal.y);
+      line.add(currentFlightData.aaReal.z);
+      line.add(currentFlightData.time);
+      line.add(currentFlightData.maxAlt);
+      line.add(currentFlightData.curAlt);
+    }
+
+      size_t written = root.printTo(charBuffer, bufSize);
+      webSocket.sendTXT(num, charBuffer, written);
+        Serial.print("Sent: " );
+        Serial.println(i);
+        delay(5);
+
+    sent += i;
   }
 }
 
-void onTextCommand(char cmd) {
+void onTextCommand(uint8_t num, char cmd) {
 
   switch (cmd) {
     case 'r':
@@ -336,7 +386,7 @@ void onTextCommand(char cmd) {
       prepareLaunch();
       break;
     case 'f':
-      sendFlightBuf();
+      sendFlightBuf(num);
       break;
     default:
       if (cmd < '0' || cmd > '9')
@@ -482,18 +532,17 @@ void loop() {
     doBlink(2, 500);
     delay(2000);
   }
-
 }
 
 void notifyClient(const char msg[]) {
 
   Serial.println(msg);
-  /*StaticJsonBuffer < 200 > jsonBuffer;
-    JsonObject& root = jsonBuffer.createObject();
-    root["status"] = "event";
-    root["message"] = msg;
+  webSocket.broadcastTXT(msg);
+}
 
-    size_t written = root.printTo(charBuffer, 200);*/
+void notifyClient(String &msg) {
+
+  Serial.println(msg);
   webSocket.broadcastTXT(msg);
 }
 

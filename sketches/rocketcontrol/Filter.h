@@ -4,6 +4,7 @@ class SimpleBuffer {
     T* buffer;
     int pos;
     int size;
+    bool prealloc = false;
   public:
 
     SimpleBuffer(int size) {
@@ -12,8 +13,16 @@ class SimpleBuffer {
       reset();
     }
 
+    SimpleBuffer(T* buf, int size) {
+      buffer = buf;
+      this->size = size;
+      prealloc = true;
+      reset();
+    }
+
+
     ~SimpleBuffer() {
-      delete[] buffer;
+      if( !prealloc) delete[] buffer;
     }
 
     int addVal(T val) {
