@@ -12,7 +12,7 @@
 
 #include "Filter.h"
 
-#define SERIALSPEED 115200
+#define SERIALSPEED 9600
 
 #define BMP_SCK 13
 #define BMP_MISO 12
@@ -47,10 +47,11 @@ int MPU6050_ACCEL_OFFSET_X = -3000,
 
 #define INTERRUPT_PIN 13  // use pin 2 on Arduino Uno & most boards
 
-const byte JsonPacketSize = 40;
-
+unsigned long lastControlTime= 0;
 Adafruit_BMP280 bmp; // I2C
 MPU6050 mpu;
+bool mpuInterruptEnabled = false;
+bool logData = false;
 Servo myservo;  // create servo object to control a servo
 RollMeanBuffer<float> altRefBuf(10),
                altShortBuf(5);
@@ -69,8 +70,8 @@ typedef struct FlightData
 VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 FlightData currentFlightData;
 
-FlightData fd[1000];
-SimpleBuffer<FlightData> flightDataBuffer(fd, 1000);
+FlightData fd[500];
+SimpleBuffer<FlightData> flightDataBuffer(fd, 500);
 
 int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 9;
@@ -78,7 +79,6 @@ unsigned long remTime = 100000;
 unsigned long startCountdownAt = 0;
 unsigned long lastSampleBmp = 0;
 unsigned long liftOffAt = 0;
-unsigned long currentMillis = 0;
 float aRef = 0, aMean = 0;
 bool recoverActive = false;
 bool bmpOk = false;
@@ -217,18 +217,25 @@ double calibrateMpu() {
 
   if( millis() > lastCommTime + 500)
   {
-    notifyClient(String("sum cali corr: ") + String(corr));
-    
+    notifyClient("sumCorr", (float)corr);
+      
     lastCommTime = millis();
   }
   return sumCorr;
 }
 
 void setMpuInterruptEnabled(bool enabled){
-  if( enabled )
+  notifyClient("setMpuInterruptEnabled " + String(enabled));
+
+  if( enabled == mpuInterruptEnabled) return;
+  
+  mpuInterrupt = false;
+  if( enabled && !mpuInterruptEnabled)
     attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
-  else
+  else if( mpuInterruptEnabled )
     detachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN));
+  mpu.resetFIFO();
+  mpuInterruptEnabled = enabled;
  mpuIntStatus = mpu.getIntStatus();
 }
 
@@ -241,7 +248,7 @@ void initMpu() {
   if ( mpu.testConnection())
   {
     doBlink(5, 300);
-    delay(2000);
+    delay(500);
     Serial.println(F("MPU6050 connection successful"));
   }
   else {
@@ -298,9 +305,10 @@ void launchRecover() {
 }
 
 void prepareLaunch() {
+  notifyClient("prepareLaunch");
+  
   setMpuInterruptEnabled(true);
 
-  notifyClient("prepareLaunch");
   startCountdownAt = millis();
   currentFlightData.maxAlt = 0;
   recoverActive = false;
@@ -323,53 +331,35 @@ void reset() {
 void sendFlightBuf(uint8_t num) {
 
   setMpuInterruptEnabled(false);
-
   const int bufSize = 1000;
-
-  int sent = 0;
   char charBuffer[bufSize];
-    
-  while( sent < flightDataBuffer.getSize())
+
+  for( int i=0; i<flightDataBuffer.getSize(); i++)
   {
     StaticJsonBuffer < bufSize > jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
 
-    JsonArray& cols = root.createNestedArray("cols");
-    cols.add("yaw");
-    cols.add("pitch");
-    cols.add("roll");
-    cols.add("areal.x");
-    cols.add("areal.y");
-    cols.add("areal.z");
-    cols.add("time");
-    cols.add("maxAlt");
-    cols.add("curAlt");
-
-    JsonArray& data = root.createNestedArray("data");
-    int i = 0;
-    for (i = 0; i < JsonPacketSize; i++) {
-      if( sent + i >= flightDataBuffer.getSize() ) break;
-
-      JsonArray& line = data.createNestedArray();
-      FlightData fd = flightDataBuffer.getVal(sent + i);
+    JsonArray& line = root.createNestedArray("data");
+    
+      FlightData fd = flightDataBuffer.getVal(i);
       line.add(fd.ypr[0]);
       line.add(fd.ypr[1]);
       line.add(fd.ypr[2]);
-      line.add(currentFlightData.aaReal.x);
-      line.add(currentFlightData.aaReal.y);
-      line.add(currentFlightData.aaReal.z);
-      line.add(currentFlightData.time);
-      line.add(currentFlightData.maxAlt);
-      line.add(currentFlightData.curAlt);
-    }
+      line.add(fd.aaReal.x);
+      line.add(fd.aaReal.y);
+      line.add(fd.aaReal.z);
+      line.add(fd.time);
+      line.add(fd.maxAlt);
+      line.add(fd.curAlt);
+    
 
       size_t written = root.printTo(charBuffer, bufSize);
-      webSocket.sendTXT(num, charBuffer, written);
+      webSocket.broadcastTXT(charBuffer, written);
+      if( i % 10 == 0) {
         Serial.print("Sent: " );
         Serial.println(i);
         delay(5);
-
-    sent += i;
+      }
   }
 }
 
@@ -400,9 +390,9 @@ void onTextCommand(uint8_t num, char cmd) {
 }
 
 bool sampleBmp() {
-  if ( lastSampleBmp + SAMPLING_TIME_BMP > currentMillis ) return false;
+  if ( lastSampleBmp + SAMPLING_TIME_BMP > millis() ) return false;
 
-  lastSampleBmp = currentMillis;
+  lastSampleBmp = millis();
 
   altShortBuf.addVal(bmp.readAltitude(1017.25));
   aMean = altShortBuf.getMean();
@@ -423,16 +413,14 @@ boolean processMpu() {
   // if programming failed, don't try to do anything
   if (!dmpReady) return false;
 
-  if ( !mpuInterrupt && fifoCount < packetSize) return false;
+    // reset interrupt flag and get INT_STATUS byte
+    mpuInterrupt = false;
+    mpuIntStatus = mpu.getIntStatus();
 
-  // reset interrupt flag and get INT_STATUS byte
-  mpuInterrupt = false;
-  mpuIntStatus = mpu.getIntStatus();
-
-  // get current FIFO count
-  fifoCount = mpu.getFIFOCount();
-
-  bool res = true;
+    fifoCount = mpu.getFIFOCount();
+  
+  boolean res = false;
+  
   // check for overflow (this should never happen unless our code is too inefficient)
   if ((mpuIntStatus & 0x10) || fifoCount == 1024) {
     // reset so we can continue cleanly
@@ -449,7 +437,7 @@ boolean processMpu() {
 
     // track FIFO count here in case there is > 1 packet available
     // (this lets us immediately read more without waiting for an interrupt)
-    fifoCount -= packetSize;
+    //fifoCount -= packetSize;
 
     if ( !liftOff && startCountdownAt <= 0) {
       calibrateMpu();
@@ -468,8 +456,8 @@ boolean processMpu() {
                 Serial.print("\t");
                 Serial.print(currentFlightData.ypr[1] * 180/M_PI);
                 Serial.print("\t");
-                Serial.println(currentFlightData.ypr[2] * 180/M_PI);
-    */
+                Serial.println(currentFlightData.ypr[2] * 180/M_PI);*/
+    res = true;
   }
 
   // blink LED to indicate activity
@@ -479,10 +467,12 @@ boolean processMpu() {
 }
 
 void logFlightData() {
+  if ( !logData ) return;
+  logData = false;
+  
   if (liftOff && flightBufPos >= 0) {
     flightBufPos = flightDataBuffer.addVal(currentFlightData);
     if (flightBufPos == flightDataBuffer.getSize() - 1) {
-      flightBufPos = -1;
       notifyClient("FlightDataBuf full");
     }
   }
@@ -490,38 +480,40 @@ void logFlightData() {
 }
 
 void doControl() {
-  currentMillis = millis();
-
-  webSocket.loop();
-
-  if (aktuellZaehler > 0 && startCountdownAt > 0
-      && (currentMillis > startCountdownAt + aktuellZaehler * 1000)
-      && !recoverLaunched) {
-    launchRecover();
-  }
-
-  currentFlightData.time = micros();
-  bool logData = sampleBmp();
-
-  if (!recoverActive && startCountdownAt > 0 && currentFlightData.curAlt > RECOVER_MINALT) {
-    recoverActive = true;
-    notifyClient("Activate recover");
-  }
-
-  if (recoverActive && currentFlightData.curAlt < currentFlightData.maxAlt - RECOVER_LAUNCH && !recoverLaunched) {
-    launchRecover();
-  }
-
-  if ((currentFlightData.maxAlt > 0.2 || currentFlightData.aaReal.z > 4000) && !liftOff && startCountdownAt>0) {
-    notifyClient("LiftOff");
-    liftOff = true;
-    liftOffAt = currentMillis;
-  }
-
-  logData = logData | processMpu();
-
-  if ( logData )
+  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-25) {
+    lastControlTime = millis();
     logFlightData();
+      
+    webSocket.loop();
+  
+    if (aktuellZaehler > 0 && startCountdownAt > 0
+        && (millis() > startCountdownAt + aktuellZaehler * 1000)
+        && !recoverLaunched) {
+      launchRecover();
+    }
+  
+    currentFlightData.time = micros();
+    logData = sampleBmp();
+  
+    if (!recoverActive && startCountdownAt > 0 && currentFlightData.curAlt > RECOVER_MINALT) {
+      recoverActive = true;
+      notifyClient("Activate recover");
+    }
+  
+    if (recoverActive && currentFlightData.curAlt < currentFlightData.maxAlt - RECOVER_LAUNCH && !recoverLaunched) {
+      launchRecover();
+    }
+  
+    if ((currentFlightData.maxAlt > 0.2 || currentFlightData.aaReal.z > 4000) && !liftOff && startCountdownAt>0) {
+      notifyClient("LiftOff");
+      liftOff = true;
+      liftOffAt = millis();
+    }
+    delay(10);
+  }
+  
+  logData = logData | processMpu();
+  logFlightData();
 }
 
 void loop() {
@@ -534,6 +526,23 @@ void loop() {
   }
 }
 
+
+void notifyClient(const char msg[], float f) {
+  Serial.println(String(msg) + ": " + String(f));
+  const byte bufSize = 100;
+  
+  StaticJsonBuffer < bufSize > jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["status"] = F("value");
+  root["key"] = msg;
+  root["value"] = f;
+  root["time"] = millis();
+  char charBuffer[bufSize];
+  size_t written = root.printTo(charBuffer, bufSize);
+  webSocket.broadcastTXT(charBuffer, written);
+    
+}
+ 
 void notifyClient(const char msg[]) {
 
   Serial.println(msg);
