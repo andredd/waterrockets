@@ -24,7 +24,7 @@
 #define RECOVER_MINALT 0.5
 #define RECOVER_LAUNCH 1.0
 
-#define SAMPLING_TIME_BMP 50
+#define SAMPLING_TIME_BMP 100
 
 #define CALIB_BUFF_SIZE 100
 
@@ -57,7 +57,13 @@ RollMeanBuffer<float> altRefBuf(10),
                altShortBuf(5);
 
 unsigned long lastCommTime = 0;
-
+const int jsonCharBufSize = 1000;
+const char jsonPacketSize = 5;
+char jsonCharBuffer[jsonCharBufSize];
+const byte msgBufSize = 100;
+char msgCharBuffer[msgBufSize];
+int clientNum = -1;
+  
 typedef struct FlightData
 {
   float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
@@ -105,6 +111,8 @@ Quaternion q;           // [w, x, y, z]         quaternion container
 VectorInt16 aa;         // [x, y, z]            accel sensor measurements
 VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
+int16_t ax, ay, az;
+int16_t gx, gy, gz;
 
 bool blinkState = false;
 
@@ -119,8 +127,10 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
   switch (type) {
     case WStype_DISCONNECTED:
       USE_SERIAL.printf("[%u] Disconnected!\n", num);
+      clientNum = -1;
       break;
     case WStype_CONNECTED: {
+        clientNum = num;
         IPAddress ip = webSocket.remoteIP(num);
         USE_SERIAL.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num,
                           ip[0], ip[1], ip[2], ip[3], payload);
@@ -163,9 +173,7 @@ void setup() {
 }
 
 double calibrateMpu() {
-  int16_t ax, ay, az;
-  int16_t gx, gy, gz;
-
+  
   mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
   bufAx.addVal(ax);
   bufAy.addVal(ay);
@@ -328,38 +336,45 @@ void reset() {
   setMpuInterruptEnabled(true);
 }
 
-void sendFlightBuf(uint8_t num) {
+void sendFlightBuf() {
 
   setMpuInterruptEnabled(false);
-  const int bufSize = 1000;
-  char charBuffer[bufSize];
-
-  for( int i=0; i<flightDataBuffer.getSize(); i++)
+  liftOff = false;
+  
+  uint sent = 0;
+  while( sent < flightDataBuffer.getSize())
   {
-    StaticJsonBuffer < bufSize > jsonBuffer;
+    StaticJsonBuffer < jsonCharBufSize > jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
-
-    JsonArray& line = root.createNestedArray("data");
-    
-      FlightData fd = flightDataBuffer.getVal(i);
-      line.add(fd.ypr[0]);
-      line.add(fd.ypr[1]);
-      line.add(fd.ypr[2]);
-      line.add(fd.aaReal.x);
-      line.add(fd.aaReal.y);
-      line.add(fd.aaReal.z);
-      line.add(fd.time);
-      line.add(fd.maxAlt);
-      line.add(fd.curAlt);
-    
-
-      size_t written = root.printTo(charBuffer, bufSize);
-      webSocket.broadcastTXT(charBuffer, written);
-      if( i % 10 == 0) {
-        Serial.print("Sent: " );
-        Serial.println(i);
-        delay(5);
-      }
+    JsonArray& data = root.createNestedArray("data");
+      
+    for( int i=0; i<jsonPacketSize; i++)
+    {
+        if( sent + i >= flightDataBuffer.getSize()) break;
+        
+        JsonArray& line = data.createNestedArray();
+        FlightData fd = flightDataBuffer.getVal(sent + i);
+        line.add(fd.ypr[0]);
+        line.add(fd.ypr[1]);
+        line.add(fd.ypr[2]);
+        line.add(fd.aaReal.x);
+        line.add(fd.aaReal.y);
+        line.add(fd.aaReal.z);
+        line.add(fd.time);
+        line.add(fd.maxAlt);
+        line.add(fd.curAlt);
+    }
+    sent += jsonPacketSize;
+    size_t written = root.printTo(jsonCharBuffer, jsonCharBufSize);
+    if( !webSocket.sendTXT(clientNum, jsonCharBuffer, written)){
+      break;
+    }
+    webSocket.loop();
+    Serial.print("Sent: " );
+    Serial.print(sent);
+    Serial.print("\t");
+    Serial.println(written);
+    delay(5);
   }
 }
 
@@ -376,7 +391,7 @@ void onTextCommand(uint8_t num, char cmd) {
       prepareLaunch();
       break;
     case 'f':
-      sendFlightBuf(num);
+      sendFlightBuf();
       break;
     default:
       if (cmd < '0' || cmd > '9')
@@ -437,7 +452,7 @@ boolean processMpu() {
 
     // track FIFO count here in case there is > 1 packet available
     // (this lets us immediately read more without waiting for an interrupt)
-    //fifoCount -= packetSize;
+    fifoCount -= packetSize;
 
     if ( !liftOff && startCountdownAt <= 0) {
       calibrateMpu();
@@ -450,13 +465,15 @@ boolean processMpu() {
     mpu.dmpGetYawPitchRoll(currentFlightData.ypr, &q, &gravity);
     mpu.dmpGetLinearAccel(&currentFlightData.aaReal, &aa, &gravity);
     mpu.dmpGetLinearAccelInWorld(&aaWorld, &currentFlightData.aaReal, &q);
-    /*
-          Serial.print("ypr\t");
-                Serial.print(currentFlightData.ypr[0] * 180/M_PI);
-                Serial.print("\t");
-                Serial.print(currentFlightData.ypr[1] * 180/M_PI);
-                Serial.print("\t");
-                Serial.println(currentFlightData.ypr[2] * 180/M_PI);*/
+    currentFlightData.time = micros();
+    
+    /*Serial.print("ypr\t");
+    Serial.print(currentFlightData.ypr[0] * 180/M_PI);
+    Serial.print("\t");
+    Serial.print(currentFlightData.ypr[1] * 180/M_PI);
+    Serial.print("\t");
+    Serial.println(currentFlightData.ypr[2] * 180/M_PI);
+    */
     res = true;
   }
 
@@ -473,6 +490,7 @@ void logFlightData() {
   if (liftOff && flightBufPos >= 0) {
     flightBufPos = flightDataBuffer.addVal(currentFlightData);
     if (flightBufPos == flightDataBuffer.getSize() - 1) {
+      flightBufPos = -1;
       notifyClient("FlightDataBuf full");
     }
   }
@@ -480,7 +498,7 @@ void logFlightData() {
 }
 
 void doControl() {
-  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-25) {
+  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-100) {
     lastControlTime = millis();
     logFlightData();
       
@@ -529,17 +547,17 @@ void loop() {
 
 void notifyClient(const char msg[], float f) {
   Serial.println(String(msg) + ": " + String(f));
-  const byte bufSize = 100;
   
-  StaticJsonBuffer < bufSize > jsonBuffer;
+  StaticJsonBuffer < msgBufSize > jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   root["status"] = F("value");
   root["key"] = msg;
   root["value"] = f;
   root["time"] = millis();
-  char charBuffer[bufSize];
-  size_t written = root.printTo(charBuffer, bufSize);
-  webSocket.broadcastTXT(charBuffer, written);
+  size_t written = root.printTo(msgCharBuffer, msgBufSize);
+  webSocket.broadcastTXT(msgCharBuffer, written);
+  Serial.print("Notify Sent: " );
+  Serial.println(written);
     
 }
  

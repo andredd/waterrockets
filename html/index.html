@@ -8,7 +8,7 @@
 	<button type="button" id="btnReset" onclick="send('r')">Reset</button>
 	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
 	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
-	<button type="button" id="btnGetLog" onclick="send('f')">Get Log</button>
+	<button type="button" id="btnGetLog" onclick="getFlightData()">Get Log</button>
 </div>
 
 <style>
@@ -103,7 +103,7 @@ body {
 
 	var startDate =0;
 
-	var width = 800, height = 150
+	var width = 800, height = 100
 
 	var tbody;
 
@@ -127,6 +127,23 @@ body {
 
 		},
 		'roll' : {
+			value : 0,
+			color : 'blue',
+			data : new Array()
+
+		},
+		'areal.x' : {
+			value : 0,
+			color : 'orange',
+			data : new Array()
+		},
+		'areal.y' : {
+			value : 0,
+			color : 'green',
+			data : new Array()
+
+		},
+		'areal.z' : {
 			value : 0,
 			color : 'blue',
 			data : new Array()
@@ -160,21 +177,29 @@ body {
 			.attr("height")
 			- margin.top - margin.bottom;
 
-	var x = d3.scaleLinear().domain([ 0, 100000000 ]).range(
+	var x = d3.scaleLinear().domain([ 0, 300000000 ]).range(
 			[ margin.left, width - margin.left ])
 	var yypr = d3.scaleLinear().domain([ -190, 190 ]).range([ height, 0 ])
-	var yCorr = d3.scaleLinear().domain([ -100, 100 ]).range([ height, 0 ])
+	var ya = d3.scaleLinear().domain([ -30000, 30000 ]).range([ height, 0 ])
+	var yCorr = d3.scaleLinear().domain([ -10, 10 ]).range([ height, 0 ])
 
+/*
 	var line = d3.line().curve(d3.curveBasis).x(function(d) {
 		return x(d[1])
 	}).y(function(d) {
 		return y(d[0])
-	})
+	})*/
 
 	var lineypr = d3.line().curve(d3.curveBasis).x(function(d) {
 		return x(d[1])
 	}).y(function(d) {
-		return yypr(d[0])
+		return yypr(d[0] * 180 / Math.PI)
+	})
+
+	var linea = d3.line().curve(d3.curveBasis).x(function(d) {
+		return x(d[1])
+	}).y(function(d) {
+		return ya(d[0])
 	})
 
 	var lineCorr = d3.line().curve(d3.curveBasis).x(function(d) {
@@ -206,7 +231,7 @@ body {
 			d3.axisLeft(yypr));
 	g2.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
-			d3.axisLeft(yypr));
+			d3.axisLeft(ya));
 	g3.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
 			d3.axisLeft(yypr));
@@ -225,10 +250,17 @@ body {
 				name + ' group').style('stroke', group.color)
 	});
 
+	cols2.forEach(function(name){
+		var group = groups[name]
+		group.path = paths2.append('path').data([ group.data ]).attr('class',
+				name + ' group').style('stroke', group.color)
+	});
+
 	function processData(data) {
 		data.cols = cols;
 		tabulate(data.data, data.cols);
-		//addChartData(data.data, data.cols.slice(0, 3), lineypr, data.data[6], axis1);
+		addChartData(data, 0, 3, lineypr, 6, axis1);
+		addChartData(data, 3, 6, linea, 6, axis1);
 	}
 
 	function updateCorr(val, time)
@@ -239,27 +271,41 @@ body {
 		group.path.attr('d', lineCorr);
 	}
 
-	function addChartData(data, columns, lineFunc, time,axis) {
+	function getFlightData(){
+		t0 = -1;
+		Object.keys(groups).forEach( function (name){
+			var group = groups[name];
+			group.data.length = 0;
+		});
+		send('f');
+	}
+
+	function addChartData(data, ci, cj, lineFunc, timeCol,axis) {
 	
 		// Add new values
 		mapCols = new Map();
-		columns.forEach(function(col, i){
+		data.cols.forEach(function(col, i){
 			mapCols.set(col, i);
 		});
-		timeCol = mapCols.get("time");
-			columns.forEach( function (name){
+		tmax = 0;
+		data.data.forEach(function(row){
+			time = row[timeCol] / 1000;
+			if( t0<0 )
+				t0 = time;
+			tmax = Math.max(time, tmax)
+			for( coli=ci; coli<cj; coli++){
+				name = data.cols[coli]
 				var group = groups[name];
-				ni = mapCols.get(name);
 				//group.data.push(group.value) // Real values arrive at irregular intervals
-				group.data.push([ data[ni], time]);
+				group.data.push([ row[coli], time]);
+
 				group.path.attr('d', lineFunc);
-			});
-		
-		if( t0 < 0 ) t0 = time; 
+			}
+		});
 			
 		// Shift domain
 		//x.domain([ now - (limit - 2) * duration, now - duration ])
-		x.domain([t0, time + 2000])
+		x.domain([t0, tmax])
 
 		// Slide x-axis left
 		axis.call(d3.axisBottom(x));
