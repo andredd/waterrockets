@@ -57,8 +57,8 @@ RollMeanBuffer<float> altRefBuf(10),
                altShortBuf(5);
 
 unsigned long lastCommTime = 0;
-const int jsonCharBufSize = 1000;
-const char jsonPacketSize = 5;
+const int jsonCharBufSize = 1500;
+const char jsonPacketSize = 10;
 char jsonCharBuffer[jsonCharBufSize];
 const byte msgBufSize = 100;
 char msgCharBuffer[msgBufSize];
@@ -76,8 +76,11 @@ typedef struct FlightData
 VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 FlightData currentFlightData;
 
-FlightData fd[500];
-SimpleBuffer<FlightData> flightDataBuffer(fd, 500);
+FlightData fd[700];
+FlightData preFlightData[100];
+
+SimpleBuffer<FlightData> flightDataBuffer(fd, 700);
+SimpleBuffer<FlightData> preFlightDataBuffer(fd, 100);
 
 int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 9;
@@ -336,24 +339,32 @@ void reset() {
   setMpuInterruptEnabled(true);
 }
 
-void sendFlightBuf() {
-
+void sendFlightData(){
   setMpuInterruptEnabled(false);
   liftOff = false;
+  sendFlightBuf(preFlightDataBuffer, 0, 1);
+  sendFlightBuf(flightDataBuffer, 1, 1);
+}
+
+void sendFlightBuf(SimpleBuffer<FlightData> &fdBuf, byte b, byte m) {
+
   
   uint sent = 0;
-  while( sent < flightDataBuffer.getSize())
+  while( sent < fdBuf.getSize())
   {
     StaticJsonBuffer < jsonCharBufSize > jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     JsonArray& data = root.createNestedArray("data");
-      
+    root["offs"] = sent;
+    root["size"] = fdBuf.getSize();
+    root["block"] = b;
+    root["max"] = m;
     for( int i=0; i<jsonPacketSize; i++)
     {
-        if( sent + i >= flightDataBuffer.getSize()) break;
+        if( sent + i >= fdBuf.getSize()) break;
         
         JsonArray& line = data.createNestedArray();
-        FlightData fd = flightDataBuffer.getVal(sent + i);
+        FlightData fd = fdBuf.getVal(sent + i);
         line.add(fd.ypr[0]);
         line.add(fd.ypr[1]);
         line.add(fd.ypr[2]);
@@ -391,7 +402,7 @@ void onTextCommand(uint8_t num, char cmd) {
       prepareLaunch();
       break;
     case 'f':
-      sendFlightBuf();
+      sendFlightData();
       break;
     default:
       if (cmd < '0' || cmd > '9')
@@ -486,6 +497,11 @@ boolean processMpu() {
 void logFlightData() {
   if ( !logData ) return;
   logData = false;
+
+  if( !liftOff && startCountdownAt > 0)
+  {
+    flightDataBuffer.addVal(currentFlightData);
+  }
   
   if (liftOff && flightBufPos >= 0) {
     flightBufPos = flightDataBuffer.addVal(currentFlightData);
@@ -563,14 +579,22 @@ void notifyClient(const char msg[], float f) {
  
 void notifyClient(const char msg[]) {
 
-  Serial.println(msg);
-  webSocket.broadcastTXT(msg);
+  notifyClient(String(msg));
 }
 
-void notifyClient(String &msg) {
+void notifyClient(String msg) {
 
   Serial.println(msg);
-  webSocket.broadcastTXT(msg);
+  StaticJsonBuffer < msgBufSize > jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["status"] = F("msg");
+  root["msg"] = msg;
+  root["time"] = millis();
+  
+  size_t written = root.printTo(msgCharBuffer, msgBufSize);
+  webSocket.broadcastTXT(msgCharBuffer, written);
+  Serial.print("Notify Sent: " );
+  Serial.println(written);
 }
 
 void setupSockets() {

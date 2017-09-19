@@ -92,6 +92,8 @@ body {
 				console.log(msg['message']);
 			} else if( msg['status'] == 'value') {
 				updateCorr(msg.value, msg.time * 1000);
+			} else if( msg['status'] == 'msg') {
+				log(msg);
 			} else {
 				processData(msg);
 			}
@@ -108,7 +110,7 @@ body {
 	var tbody;
 
 	var t0 = -1;
-
+	var flightTrace = [];
 	gCorr = {
 		value : 0,
 		color : 'orange',
@@ -180,7 +182,8 @@ body {
 	var x = d3.scaleLinear().domain([ 0, 300000000 ]).range(
 			[ margin.left, width - margin.left ])
 	var yypr = d3.scaleLinear().domain([ -190, 190 ]).range([ height, 0 ])
-	var ya = d3.scaleLinear().domain([ -30000, 30000 ]).range([ height, 0 ])
+	var ya = d3.scaleLinear().domain([ -20000, 20000 ]).range([ height, 0 ])
+	var yAlt = d3.scaleLinear().domain([ -2, 300 ]).range([ height, 0 ])
 	var yCorr = d3.scaleLinear().domain([ -10, 10 ]).range([ height, 0 ])
 
 /*
@@ -190,19 +193,25 @@ body {
 		return y(d[0])
 	})*/
 
-	var lineypr = d3.line().curve(d3.curveBasis).x(function(d) {
+	var lineypr = d3.line().x(function(d) {
 		return x(d[1])
 	}).y(function(d) {
 		return yypr(d[0] * 180 / Math.PI)
 	})
 
-	var linea = d3.line().curve(d3.curveBasis).x(function(d) {
+	var linea = d3.line().x(function(d) {
 		return x(d[1])
 	}).y(function(d) {
 		return ya(d[0])
 	})
 
-	var lineCorr = d3.line().curve(d3.curveBasis).x(function(d) {
+	var lineAlt = d3.line().x(function(d) {
+		return x(d[1])
+	}).y(function(d) {
+		return yAlt(d[0])
+	})
+
+	var lineCorr = d3.line().x(function(d) {
 		return x(d[1])
 	}).y(function(d) {
 		return yCorr(d[0])
@@ -214,27 +223,27 @@ body {
 	g3 = svgG3.append("g");
 
 	axis0 = g0.append("g").attr("class", "axis axis--x").attr("transform",
-			"translate(0," + height + ")").call(d3.axisBottom(x));
+			"translate(0," + height/2 + ")").call(d3.axisBottom(x));
 	axis1 = g1.append("g").attr("class", "axis axis--x").attr("transform",
-			"translate(0," + height + ")").call(d3.axisBottom(x));
+			"translate(0," + height/2 + ")").call(d3.axisBottom(x));
 	axis2 = g2.append("g").attr("class", "axis axis--x").attr("transform",
-			"translate(0," + height + ")").call(d3.axisBottom(x));
+			"translate(0," + height/2 + ")").call(d3.axisBottom(x));
 	axis3 = g3.append("g").attr("class", "axis axis--x").attr("transform",
 			"translate(0," + height + ")").call(d3.axisBottom(x));
 
 	
-	g0.append("g").attr("class", "axis axis--y").attr("transform",
+	y0 = g0.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
 			d3.axisLeft(yCorr));
-	g1.append("g").attr("class", "axis axis--y").attr("transform",
+	y1 = g1.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
 			d3.axisLeft(yypr));
-	g2.append("g").attr("class", "axis axis--y").attr("transform",
+	y2 = g2.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
 			d3.axisLeft(ya));
-	g3.append("g").attr("class", "axis axis--y").attr("transform",
+	y3 = g3.append("g").attr("class", "axis axis--y").attr("transform",
 			"translate(" + margin.left + "," + margin.top + ")").call(
-			d3.axisLeft(yypr));
+			d3.axisLeft(yAlt));
 
 	var paths0 = svgG0.append('g')
 	var paths1 = svgG1.append('g')
@@ -256,22 +265,48 @@ body {
 				name + ' group').style('stroke', group.color)
 	});
 
+	cols3.forEach(function(name){
+		var group = groups[name]
+		group.path = paths3.append('path').data([ group.data ]).attr('class',
+				name + ' group').style('stroke', group.color)
+	});
+
+	function log(msg)
+	{
+		console.log(msg);
+	}
+
 	function processData(data) {
+		console.log([data.block, data.max, data.offs, data.data.length, data.size])
+		if( data.block==0 )
+		{
+			flightTrace = [...flightTrace, ...data.data];
+			if(data.offs + data.data.length == data.size)
+			{
+				data = {
+					'data': flightTrace.sort(function(a,b){return a[6] - b[6]})
+				}
+			} else
+			{
+				return;
+			}
+		}
 		data.cols = cols;
 		tabulate(data.data, data.cols);
-		addChartData(data, 0, 3, lineypr, 6, axis1);
-		addChartData(data, 3, 6, linea, 6, axis1);
+		addChartData(data, 0, 3, lineypr, 6, axis1, null, null);
+		addChartData(data, 3, 6, linea, 6, axis2, ya, y2);
+		addChartData(data, 7, 9, lineAlt, 6, axis3, yAlt, y3);
 	}
 
 	function updateCorr(val, time)
 	{
-		console.log("Corr: " + time + ": " + val)
 		var group = gCorr;
 		group.data.push([ val, time ]);
 		group.path.attr('d', lineCorr);
 	}
 
 	function getFlightData(){
+		flightTrace = [];
 		t0 = -1;
 		Object.keys(groups).forEach( function (name){
 			var group = groups[name];
@@ -280,7 +315,7 @@ body {
 		send('f');
 	}
 
-	function addChartData(data, ci, cj, lineFunc, timeCol,axis) {
+	function addChartData(data, ci, cj, lineFunc, timeCol,axis, y, yax) {
 	
 		// Add new values
 		mapCols = new Map();
@@ -297,28 +332,39 @@ body {
 				name = data.cols[coli]
 				var group = groups[name];
 				//group.data.push(group.value) // Real values arrive at irregular intervals
-				group.data.push([ row[coli], time]);
-
-				group.path.attr('d', lineFunc);
+				group.data.push([ row[coli], time-t0]);
 			}
 		});
 			
+		for( coli=ci; coli<cj; coli++){
+				name = data.cols[coli]
+				var group = groups[name];
+
+				group.path.attr('d', lineFunc);
+		}
 		// Shift domain
 		//x.domain([ now - (limit - 2) * duration, now - duration ])
-		x.domain([t0, tmax])
+		x.domain([0, tmax-t0])
 
 		// Slide x-axis left
 		axis.call(d3.axisBottom(x));
 
-		// Slide paths left
-		/*paths.attr('transform', null).attr(
-				'transform',
-				'translate(' + x(now - (limit - 1) * duration) + ')');
-		 */
-		// Remove oldest data point from each group
-		for ( var name in groups) {
-			var group = groups[name]
-			//group.data.shift()
+		if( y != null && yax != null)
+		{
+		mi = 999999999;
+		ma = -999999999;
+		for( coli=ci; coli<cj; coli++){
+			name = data.cols[coli]
+			var group = groups[name];
+			mi = Math.min(mi, d3.min(group.data, function(d){
+				return d[0];
+			}))
+			ma = Math.max(ma, d3.max(group.data, function(d){
+				return d[0];
+			}))
+		}
+		y.domain([mi, ma])
+		yax.call(d3.axisLeft(y));
 		}
 	}
 
@@ -355,5 +401,41 @@ body {
 		});
 
 		return table;
+	}
+
+	var textFile = null,
+	  makeTextFile = function (text) {
+		var data = new Blob([text], {type: 'text/plain'});
+
+		// If we are replacing a previously generated file we need to
+		// manually revoke the object URL to avoid memory leaks.
+		if (textFile !== null) {
+		  window.URL.revokeObjectURL(textFile);
+		}
+
+		textFile = window.URL.createObjectURL(data);
+
+		// returns a URL you can use as a href
+		return textFile;
+	  };
+
+	function doDownload(){
+		var create = document.getElementById('create'),
+    textbox = document.getElementById('textbox');
+
+  create.addEventListener('click', function () {
+    var link = document.createElement('a');
+    link.setAttribute('download', 'info.txt');
+    link.href = makeTextFile(textbox.value);
+    document.body.appendChild(link);
+
+    // wait for the link to be added to the document
+    window.requestAnimationFrame(function () {
+      var event = new MouseEvent('click');
+      link.dispatchEvent(event);
+      document.body.removeChild(link);
+    });
+
+  }, false);
 	}
 </script>
