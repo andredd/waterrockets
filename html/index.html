@@ -278,9 +278,15 @@ body {
 
 	function processData(data) {
 		console.log([data.block, data.max, data.offs, data.data.length, data.size])
+		flightTrace = [...flightTrace, ...data.data];
+
+		if( data.block==data.max && data.offs + data.data.length >= data.size)
+		{
+			doDownload(JSON.stringify(flightTrace));
+		}
+
 		if( data.block==0 )
 		{
-			flightTrace = [...flightTrace, ...data.data];
 			if(data.offs + data.data.length == data.size)
 			{
 				data = {
@@ -325,14 +331,17 @@ body {
 		tmax = 0;
 		data.data.forEach(function(row){
 			time = row[timeCol] / 1000;
-			if( t0<0 )
-				t0 = time;
-			tmax = Math.max(time, tmax)
-			for( coli=ci; coli<cj; coli++){
-				name = data.cols[coli]
-				var group = groups[name];
-				//group.data.push(group.value) // Real values arrive at irregular intervals
-				group.data.push([ row[coli], time-t0]);
+			if( time>0 ){
+
+				if( t0<0 )
+					t0 = time;
+				tmax = Math.max(time, tmax)
+				for( coli=ci; coli<cj; coli++){
+					name = data.cols[coli]
+					var group = groups[name];
+					//group.data.push(group.value) // Real values arrive at irregular intervals
+					group.data.push([ row[coli], time-t0]);
+				}
 			}
 		});
 			
@@ -419,23 +428,17 @@ body {
 		return textFile;
 	  };
 
-	function doDownload(){
-		var create = document.getElementById('create'),
-    textbox = document.getElementById('textbox');
+	function doDownload(text){
+		var link = document.createElement('a');
+		link.setAttribute('download', 'flightdata_' + new Date() + '.json');
+		link.href = makeTextFile(text);
+		document.body.appendChild(link);
 
-  create.addEventListener('click', function () {
-    var link = document.createElement('a');
-    link.setAttribute('download', 'info.txt');
-    link.href = makeTextFile(textbox.value);
-    document.body.appendChild(link);
-
-    // wait for the link to be added to the document
-    window.requestAnimationFrame(function () {
-      var event = new MouseEvent('click');
-      link.dispatchEvent(event);
-      document.body.removeChild(link);
-    });
-
-  }, false);
+		// wait for the link to be added to the document
+		window.requestAnimationFrame(function () {
+		  var event = new MouseEvent('click');
+		  link.dispatchEvent(event);
+		  document.body.removeChild(link);
+		});
 	}
 </script>

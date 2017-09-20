@@ -78,9 +78,8 @@ FlightData currentFlightData;
 
 FlightData fd[700];
 FlightData preFlightData[100];
-
 SimpleBuffer<FlightData> flightDataBuffer(fd, 700);
-SimpleBuffer<FlightData> preFlightDataBuffer(fd, 100);
+SimpleBuffer<FlightData> preFlightDataBuffer(preFlightData, 100);
 
 int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 9;
@@ -325,6 +324,7 @@ void prepareLaunch() {
   recoverActive = false;
   liftOff = false;
   flightDataBuffer.reset();
+  preFlightDataBuffer.reset();
   flightBufPos = 0;
 }
 
@@ -359,6 +359,9 @@ void sendFlightBuf(SimpleBuffer<FlightData> &fdBuf, byte b, byte m) {
     root["size"] = fdBuf.getSize();
     root["block"] = b;
     root["max"] = m;
+    root["pos"] = fdBuf.getPos();
+    root["total"] = fdBuf.getTotal();
+    
     for( int i=0; i<jsonPacketSize; i++)
     {
         if( sent + i >= fdBuf.getSize()) break;
@@ -500,7 +503,7 @@ void logFlightData() {
 
   if( !liftOff && startCountdownAt > 0)
   {
-    flightDataBuffer.addVal(currentFlightData);
+    preFlightDataBuffer.addVal(currentFlightData);
   }
   
   if (liftOff && flightBufPos >= 0) {

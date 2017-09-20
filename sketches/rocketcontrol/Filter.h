@@ -5,6 +5,7 @@ class SimpleBuffer {
     int pos;
     int size;
     bool prealloc = false;
+    long total = 0;
   public:
 
     SimpleBuffer(int size) {
@@ -29,6 +30,7 @@ class SimpleBuffer {
       int wrPos = pos;
       this->buffer[pos] = val;
       pos++;
+      total++;
       if ( pos >= size)
         pos = 0;
 
@@ -36,6 +38,10 @@ class SimpleBuffer {
 
     }
 
+    int getPos(){
+      return pos;
+    }
+    
     T getVal(int pos) {
       return this->buffer[pos];
     }
@@ -44,9 +50,14 @@ class SimpleBuffer {
       return size;
     }
 
+    int getTotal(){
+      return total;
+     }
+     
     void reset() {
       memset(buffer, 0, sizeof(buffer));
       pos = 0;
+      total = 0;
     }
 };
 
