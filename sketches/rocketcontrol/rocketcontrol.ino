@@ -7,7 +7,7 @@
 #include <ESP8266WiFi.h>
 #include <WebSocketsServer.h>
 #include <ESP8266mDNS.h>
-#include <Hash.h>
+//#include <Hash.h>
 #include <MPU6050_6Axis_MotionApps20.h>
 
 #include "Filter.h"
@@ -22,9 +22,9 @@
 #define servoPin 3
 #define LED_PIN     2
 #define RECOVER_MINALT 0.5
-#define RECOVER_LAUNCH 1.0
+#define RECOVER_LAUNCH 0.5
 
-#define SAMPLING_TIME_BMP 100
+#define SAMPLING_TIME_BMP 200
 
 #define CALIB_BUFF_SIZE 100
 
@@ -46,6 +46,8 @@ int MPU6050_ACCEL_OFFSET_X = -3000,
 
 
 #define INTERRUPT_PIN 13  // use pin 2 on Arduino Uno & most boards
+
+const char AP_Name[] = "ESP8266 Andiminator";
 
 unsigned long lastControlTime= 0;
 Adafruit_BMP280 bmp; // I2C
@@ -153,16 +155,17 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
 
 void setup() {
 
-  Serial.begin(SERIALSPEED);
-
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, 0);
-  doBlink(2, 300);
   myservo.attach(servoPin); // attaches the servo on pin 9 to the servo object
-
   // vorsichtshalber nach reboot auslösen
   launchRecover();
 
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, 0);
+  
+  Serial.begin(SERIALSPEED);
+
+  doBlink(2, 300);
+  
   bmpOk = bmp.begin();
   Serial.print("BMP: ");
   Serial.println(bmpOk);
@@ -187,40 +190,40 @@ double calibrateMpu() {
 
   double corr = -bufAx.getMean();
   double sumCorr = corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_ACCEL_OFFSET_X += (corr > 0 ? 1 : -1);
     mpu.setXAccelOffset(MPU6050_ACCEL_OFFSET_X);
   }
 
   corr = -bufAy.getMean();
   sumCorr += corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_ACCEL_OFFSET_Y += (corr > 0 ? 1 : -1);
     mpu.setYAccelOffset(MPU6050_ACCEL_OFFSET_Y);
   }
 
   corr = -bufAz.getMean();
   sumCorr += corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_ACCEL_OFFSET_Z += (corr > 0 ? 1 : -1);
     mpu.setZAccelOffset(MPU6050_ACCEL_OFFSET_Z);
   }
 
   corr = -bufgx.getMean();
   sumCorr += corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_GYRO_OFFSET_X += (corr > 0 ? 1 : -1);
     mpu.setXGyroOffset(MPU6050_GYRO_OFFSET_X);
   }
   corr = -bufgy.getMean();
   sumCorr += corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_GYRO_OFFSET_Y += (corr > 0 ? 1 : -1);
     mpu.setYGyroOffset(MPU6050_GYRO_OFFSET_Y);
   }
   corr = -bufgz.getMean();
   sumCorr += corr;
-  if ( corr < -1 || corr > 1) {
+  if ( corr <= -1 || corr >= 1) {
     MPU6050_GYRO_OFFSET_Z += (corr > 0 ? 1 : -1);
     mpu.setZGyroOffset(MPU6050_GYRO_OFFSET_Z);
   }
@@ -309,9 +312,9 @@ void initMpu() {
 }
 
 void launchRecover() {
-  notifyClient("GO!!!");
   myservo.write(map(800, 0, 1023, 0, 180));
   recoverLaunched = true;
+  notifyClient("GO!!!");
 }
 
 void prepareLaunch() {
@@ -517,7 +520,7 @@ void logFlightData() {
 }
 
 void doControl() {
-  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-100) {
+  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-200) {
     lastControlTime = millis();
     logFlightData();
       
@@ -541,7 +544,7 @@ void doControl() {
       launchRecover();
     }
   
-    if ((currentFlightData.maxAlt > 0.2 || currentFlightData.aaReal.z > 4000) && !liftOff && startCountdownAt>0) {
+    if (currentFlightData.maxAlt > 0.2 && !liftOff && startCountdownAt>0) {
       notifyClient("LiftOff");
       liftOff = true;
       liftOffAt = millis();
@@ -550,6 +553,12 @@ void doControl() {
   }
   
   logData = logData | processMpu();
+
+  if (currentFlightData.aaReal.y > -6000 && !liftOff && startCountdownAt>0) {
+      notifyClient("LiftOff");
+      liftOff = true;
+      liftOffAt = millis();
+    }
   logFlightData();
 }
 
@@ -565,19 +574,21 @@ void loop() {
 
 
 void notifyClient(const char msg[], float f) {
-  Serial.println(String(msg) + ": " + String(f));
-  
-  StaticJsonBuffer < msgBufSize > jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
-  root["status"] = F("value");
-  root["key"] = msg;
-  root["value"] = f;
-  root["time"] = millis();
-  size_t written = root.printTo(msgCharBuffer, msgBufSize);
-  webSocket.broadcastTXT(msgCharBuffer, written);
-  Serial.print("Notify Sent: " );
-  Serial.println(written);
-    
+  if( Serial )
+    Serial.println(String(msg) + ": " + String(f));
+  if (wifiStatus == WL_CONNECTED)
+  {
+    StaticJsonBuffer < msgBufSize > jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    root["status"] = F("value");
+    root["key"] = msg;
+    root["value"] = f;
+    root["time"] = millis();
+    size_t written = root.printTo(msgCharBuffer, msgBufSize);
+    webSocket.broadcastTXT(msgCharBuffer, written);
+    Serial.print("Notify Sent: " );
+    Serial.println(written);
+  }
 }
  
 void notifyClient(const char msg[]) {
@@ -587,22 +598,27 @@ void notifyClient(const char msg[]) {
 
 void notifyClient(String msg) {
 
-  Serial.println(msg);
-  StaticJsonBuffer < msgBufSize > jsonBuffer;
-  JsonObject& root = jsonBuffer.createObject();
-  root["status"] = F("msg");
-  root["msg"] = msg;
-  root["time"] = millis();
-  
-  size_t written = root.printTo(msgCharBuffer, msgBufSize);
-  webSocket.broadcastTXT(msgCharBuffer, written);
-  Serial.print("Notify Sent: " );
-  Serial.println(written);
+  if( Serial )
+    Serial.println(msg);
+  if (wifiStatus == WL_CONNECTED)
+  {
+    StaticJsonBuffer < msgBufSize > jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    root["status"] = F("msg");
+    root["msg"] = msg;
+    root["time"] = millis();
+    
+    size_t written = root.printTo(msgCharBuffer, msgBufSize);
+    webSocket.broadcastTXT(msgCharBuffer, written);
+    Serial.print("Notify Sent: " );
+    Serial.println(written);
+  }
 }
 
 void setupSockets() {
   // start webSocket server
-  Serial.println("Setup Sockets");
+  if( Serial )
+    Serial.println("Setup Sockets");
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
 
@@ -616,8 +632,8 @@ void setupSockets() {
 }
 
 boolean setupWifiHome() {
-  char pass[] = "nfJUr4).kzS3*A";
-  char ssid[] = "NETGEAR45";
+  const char pass[] = "nfJUr4).kzS3*A";
+  const char ssid[] = "NETGEAR45";
 
   doBlink(2, 300);
   Serial.print("Trying to connect to ");
@@ -658,26 +674,11 @@ boolean setupWifiHome() {
 }
 
 boolean setupWiFiAP() {
-  Serial.println("start wifi ap");
+  Serial.println(F("start wifi ap"));
   WiFi.mode(WIFI_AP);
 
-  // Do a little work to get a unique-ish name. Append the
-  // last two bytes of the MAC (HEX'd) to "Thing-":
-  uint8_t mac[WL_MAC_ADDR_LENGTH];
-  WiFi.softAPmacAddress(mac);
-  String macID = String(mac[WL_MAC_ADDR_LENGTH - 2], HEX)
-                 + String(mac[WL_MAC_ADDR_LENGTH - 1], HEX);
-  macID.toUpperCase();
-  String AP_NameString = "ESP8266 Thing " + macID;
-
-  char AP_NameChar[AP_NameString.length() + 1];
-  memset(AP_NameChar, 0, AP_NameString.length() + 1);
-
-  for (int i = 0; i < AP_NameString.length(); i++)
-    AP_NameChar[i] = AP_NameString.charAt(i);
-
-  WiFi.softAP(AP_NameChar, WiFiAPPSK);
-  Serial.println("done setup ap");
+  WiFi.softAP(AP_Name, WiFiAPPSK);
+  Serial.println(F("done setup ap"));
   wifiStatus = WL_CONNECTED;
   return true;
 }
@@ -686,9 +687,9 @@ bool checkWiFi() {
   if (wifiStatus == WL_CONNECTED)
     return true;
   bool res = setupWiFiAP();
-  Serial.println("Setup AP:  ");
+  Serial.println(F("Setup AP:  "));
   Serial.print(res);
-  Serial.print("IP Addr:  ");
+  Serial.print(F("IP Addr:  "));
   Serial.println(WiFi.localIP());
 
   setupSockets();

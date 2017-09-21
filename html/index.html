@@ -5,7 +5,7 @@
 <div class="graph"><svg id="g3" class="chart" /></div>
 <div id="container"></div>
 <div id="controls">
-	<button type="button" id="btnReset" onclick="send('r')">Reset</button>
+	<button type="button" id="btnReset" onclick="reset()">Reset</button>
 	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
 	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
 	<button type="button" id="btnGetLog" onclick="getFlightData()">Get Log</button>
@@ -91,7 +91,7 @@ body {
 			if (msg['status'] == 'event') {
 				console.log(msg['message']);
 			} else if( msg['status'] == 'value') {
-				updateCorr(msg.value, msg.time * 1000);
+				updateCorr(msg.value, msg.time);
 			} else if( msg['status'] == 'msg') {
 				log(msg);
 			} else {
@@ -276,6 +276,11 @@ body {
 		console.log(msg);
 	}
 
+	function reset(){
+		resetCharts();
+		send('r');
+	}
+
 	function processData(data) {
 		console.log([data.block, data.max, data.offs, data.data.length, data.size])
 		flightTrace = [...flightTrace, ...data.data];
@@ -298,7 +303,7 @@ body {
 			}
 		}
 		data.cols = cols;
-		tabulate(data.data, data.cols);
+		//tabulate(data.data, data.cols);
 		addChartData(data, 0, 3, lineypr, 6, axis1, null, null);
 		addChartData(data, 3, 6, linea, 6, axis2, ya, y2);
 		addChartData(data, 7, 9, lineAlt, 6, axis3, yAlt, y3);
@@ -309,15 +314,37 @@ body {
 		var group = gCorr;
 		group.data.push([ val, time ]);
 		group.path.attr('d', lineCorr);
+
+		x.domain(d3.extent(group.data, function(d){
+			return d[1];
+		}));
+
+		// Slide x-axis left
+		axis0.call(d3.axisBottom(x));
+
+		yCorr.domain(d3.extent(group.data, function(d){
+			return d[0];
+		}));
+		y0.call(d3.axisLeft(yCorr));
+		
 	}
 
-	function getFlightData(){
+	function resetCharts()
+	{
 		flightTrace = [];
 		t0 = -1;
+		gCorr.data.length = 0;
+		gCorr.path.selectAll("*").remove();
 		Object.keys(groups).forEach( function (name){
 			var group = groups[name];
 			group.data.length = 0;
+			group.path.selectAll("*").remove();
+		
 		});
+	}
+
+	function getFlightData(){
+		resetCharts();
 		send('f');
 	}
 
@@ -340,7 +367,7 @@ body {
 					name = data.cols[coli]
 					var group = groups[name];
 					//group.data.push(group.value) // Real values arrive at irregular intervals
-					group.data.push([ row[coli], time-t0]);
+					group.data.push([ row[coli], time]);
 				}
 			}
 		});
@@ -353,7 +380,7 @@ body {
 		}
 		// Shift domain
 		//x.domain([ now - (limit - 2) * duration, now - duration ])
-		x.domain([0, tmax-t0])
+		x.domain([t0, tmax])
 
 		// Slide x-axis left
 		axis.call(d3.axisBottom(x));
