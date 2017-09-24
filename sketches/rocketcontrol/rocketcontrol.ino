@@ -19,12 +19,12 @@
 #define BMP_MOSI 11
 #define BMP_CS 10
 
-#define servoPin 3
+#define servoPin 12
 #define LED_PIN     2
 #define RECOVER_MINALT 0.5
 #define RECOVER_LAUNCH 0.5
 
-#define SAMPLING_TIME_BMP 200
+#define SAMPLING_TIME_BMP 25
 
 #define CALIB_BUFF_SIZE 100
 
@@ -520,7 +520,7 @@ void logFlightData() {
 }
 
 void doControl() {
-  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-200) {
+  while (!mpuInterrupt && fifoCount < packetSize || lastControlTime < millis()-SAMPLING_TIME_BMP) {
     lastControlTime = millis();
     logFlightData();
       

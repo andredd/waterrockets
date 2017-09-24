@@ -1,16 +1,18 @@
 <script type="text/javascript" src="lib/d3/v4/d3.js"></script>
-<div class="graph"><svg id="g0" class="chart" /></div>
-<div class="graph"><svg id="g1" class="chart" /></div>
-<div class="graph"><svg id="g2" class="chart" /></div>
-<div class="graph"><svg id="g3" class="chart" /></div>
-<div id="container"></div>
 <div id="controls">
 	<button type="button" id="btnReset" onclick="reset()">Reset</button>
 	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
 	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
 	<button type="button" id="btnGetLog" onclick="getFlightData()">Get Log</button>
+	<textarea id="logarea" rows="6" cols="80" readonly>
+	</textarea>
 </div>
-
+<p/>
+<div class="graph"><svg id="g0" class="chart" /></div>
+<div class="graph"><svg id="g1" class="chart" /></div>
+<div class="graph"><svg id="g2" class="chart" /></div>
+<div class="graph"><svg id="g3" class="chart" /></div>
+<div id="container"></div>
 <style>
 body {
 	font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -79,21 +81,21 @@ body {
 			connection.send('Connect ' + new Date());
 		};
 		connection.onerror = function(error) {
-			console.log('WebSocket Error ', error);
+			doLog('WebSocket Error ', error);
 		};
 
 		connection.onmessage = function(e) {
 			if( e.data[0]!='{'){
-				console.log(e.data);
+				doLog(e.data);
 				return;
 			} else {
 			msg = JSON.parse(e.data);
 			if (msg['status'] == 'event') {
-				console.log(msg['message']);
+				doLog(msg['message']);
 			} else if( msg['status'] == 'value') {
 				updateCorr(msg.value, msg.time);
 			} else if( msg['status'] == 'msg') {
-				log(msg);
+				doLog(msg);
 			} else {
 				processData(msg);
 			}
@@ -105,7 +107,7 @@ body {
 
 	var startDate =0;
 
-	var width = 800, height = 100
+	var width = 600, height = 80
 
 	var tbody;
 
@@ -271,18 +273,21 @@ body {
 				name + ' group').style('stroke', group.color)
 	});
 
-	function log(msg)
-	{
-		console.log(msg);
-	}
-
 	function reset(){
 		resetCharts();
 		send('r');
 	}
 
+	function doLog(msg)
+	{
+		console.log(msg)
+		area =document.getElementById("logarea") 
+		val = area.value
+		area.value = JSON.stringify(msg) + "\n" + val
+	}
+
 	function processData(data) {
-		console.log([data.block, data.max, data.offs, data.data.length, data.size])
+		doLog([data.block, data.max, data.offs, data.data.length, data.size])
 		flightTrace = [...flightTrace, ...data.data];
 
 		if( data.block==data.max && data.offs + data.data.length >= data.size)
