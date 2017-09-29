@@ -24,7 +24,7 @@
 #define RECOVER_MINALT 0.5
 #define RECOVER_LAUNCH 0.5
 
-#define SAMPLING_TIME_BMP 25
+#define SAMPLING_TIME_BMP 70
 
 #define CALIB_BUFF_SIZE 100
 
@@ -155,11 +155,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload,
 
 void setup() {
 
+  pinMode(LED_PIN, OUTPUT);
   myservo.attach(servoPin); // attaches the servo on pin 9 to the servo object
   // vorsichtshalber nach reboot auslösen
   launchRecover();
 
-  pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, 0);
   
   Serial.begin(SERIALSPEED);
@@ -313,6 +313,7 @@ void initMpu() {
 
 void launchRecover() {
   myservo.write(map(800, 0, 1023, 0, 180));
+  doBlink(4, 300);
   recoverLaunched = true;
   notifyClient("GO!!!");
 }

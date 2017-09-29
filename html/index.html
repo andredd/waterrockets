@@ -1,10 +1,11 @@
 <script type="text/javascript" src="lib/d3/v4/d3.js"></script>
 <div id="controls">
-	<button type="button" id="btnReset" onclick="reset()">Reset</button>
-	<button type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
-	<button type="button" id="btnX" onclick="send('x')">Lift Off</button>
-	<button type="button" id="btnGetLog" onclick="getFlightData()">Get Log</button>
-	<textarea id="logarea" rows="6" cols="80" readonly>
+	<button class="button big-btn" type="button" id="btnReset" onclick="reset()">Reset</button>
+	<button class="button big-btn" type="button" id="btnLaunch" onclick="send('l')">Fallschirm LOS</button>
+	<button class="button big-btn" type="button" id="btnX" onclick="send('x')">Lift Off</button>
+	<button class="button big-btn" type="button" id="btnGetLog" onclick="getFlightData()">Get Log</button>
+	<p/>
+	<textarea id="logarea" rows="10" cols="120">
 	</textarea>
 </div>
 <p/>
@@ -41,6 +42,31 @@ body {
 	stroke: black;
 	stroke-width: 1.5;
 }
+
+.button {
+        background-color: #000000;
+        color: #FFFFFF;
+        padding: 10px;
+        border-radius: 10px;
+        -moz-border-radius: 10px;
+        -webkit-border-radius: 10px;
+        margin:10px
+    }
+    
+    .small-btn {
+        width: 50px;
+        height: 25px;
+    }
+    
+    .medium-btn {
+        width: 70px;
+        height: 30px;
+    }
+    
+    .big-btn {
+        width: 140px;
+        height: 60px;
+    }
 </style>
 
 <script type="text/javascript">
@@ -107,7 +133,7 @@ body {
 
 	var startDate =0;
 
-	var width = 600, height = 80
+	var width = 800, height = 140
 
 	var tbody;
 
