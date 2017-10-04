@@ -7,7 +7,6 @@
 #include <ESP8266WiFi.h>
 #include <WebSocketsServer.h>
 #include <ESP8266mDNS.h>
-//#include <Hash.h>
 #include <MPU6050_6Axis_MotionApps20.h>
 
 #include "Filter.h"
@@ -24,7 +23,7 @@
 #define RECOVER_MINALT 0.5
 #define RECOVER_LAUNCH 0.5
 
-#define SAMPLING_TIME_BMP 70
+#define SAMPLING_TIME_BMP 100
 
 #define CALIB_BUFF_SIZE 100
 
@@ -66,7 +65,7 @@ const byte msgBufSize = 100;
 char msgCharBuffer[msgBufSize];
 int clientNum = -1;
   
-typedef struct FlightData
+struct FlightData
 {
   float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
   VectorInt16 aaReal;     // [x, y, z]            gravity-free accel sensor measurements
@@ -75,14 +74,21 @@ typedef struct FlightData
   unsigned long time;
 };
 
+struct FlightMsg{
+  char msg[64];
+  unsigned long time;
+};
+  
 VectorInt16 aaWorld;    // [x, y, z]            world-frame accel sensor measurements
 FlightData currentFlightData;
 
 FlightData fd[700];
-FlightData preFlightData[100];
+FlightData preFlightData[50];
+FlightMsg fm[30];
 SimpleBuffer<FlightData> flightDataBuffer(fd, 700);
-SimpleBuffer<FlightData> preFlightDataBuffer(preFlightData, 100);
-
+SimpleBuffer<FlightData> preFlightDataBuffer(preFlightData, 50);
+SimpleBuffer<FlightMsg> flightMsgBuffer(fm, 30);
+    
 int wifiStatus = WL_DISCONNECTED;
 int aktuellZaehler = 9;
 unsigned long remTime = 100000;
@@ -313,7 +319,6 @@ void initMpu() {
 
 void launchRecover() {
   myservo.write(map(800, 0, 1023, 0, 180));
-  doBlink(4, 300);
   recoverLaunched = true;
   notifyClient("GO!!!");
 }
@@ -341,6 +346,10 @@ void reset() {
   recoverLaunched = false;
   liftOff = false;
   setMpuInterruptEnabled(true);
+  flightDataBuffer.reset();
+  preFlightDataBuffer.reset();
+  flightMsgBuffer.reset();
+  logData = false;
 }
 
 void sendFlightData(){
@@ -348,11 +357,28 @@ void sendFlightData(){
   liftOff = false;
   sendFlightBuf(preFlightDataBuffer, 0, 1);
   sendFlightBuf(flightDataBuffer, 1, 1);
+  // flightMsgBuffer
+  const int msgBufferSize = 200;
+  char msgCharBuffer[msgBufferSize];
+ 
+  for( int i=0; i<flightMsgBuffer.getSize(); i++ )
+  {
+    FlightMsg m = flightMsgBuffer.getVal(i);
+    if(m.time <= 0 ) continue;
+    
+    StaticJsonBuffer < msgBufferSize > jsonBuffer;
+    JsonObject& root = jsonBuffer.createObject();
+    root["time"] = m.time;
+    root["msg"] = m.msg;
+    root["status"] = F("msg");
+    size_t written = root.printTo(msgCharBuffer, msgBufferSize);
+    if( !webSocket.sendTXT(clientNum, msgCharBuffer, written)){
+      break;
+    } 
+  }
 }
 
 void sendFlightBuf(SimpleBuffer<FlightData> &fdBuf, byte b, byte m) {
-
-  
   uint sent = 0;
   while( sent < fdBuf.getSize())
   {
@@ -392,7 +418,7 @@ void sendFlightBuf(SimpleBuffer<FlightData> &fdBuf, byte b, byte m) {
     Serial.print(sent);
     Serial.print("\t");
     Serial.println(written);
-    delay(5);
+    delay(1);
   }
 }
 
@@ -485,13 +511,6 @@ boolean processMpu() {
     mpu.dmpGetLinearAccelInWorld(&aaWorld, &currentFlightData.aaReal, &q);
     currentFlightData.time = micros();
     
-    /*Serial.print("ypr\t");
-    Serial.print(currentFlightData.ypr[0] * 180/M_PI);
-    Serial.print("\t");
-    Serial.print(currentFlightData.ypr[1] * 180/M_PI);
-    Serial.print("\t");
-    Serial.println(currentFlightData.ypr[2] * 180/M_PI);
-    */
     res = true;
   }
 
@@ -568,17 +587,18 @@ void loop() {
   if (checkWiFi()) {
     doControl();
   } else {
-    doBlink(2, 500);
-    delay(2000);
+    delay(50);
   }
 }
 
 
 void notifyClient(const char msg[], float f) {
+  if( startCountdownAt>0 ) return;
+  
   if( Serial )
     Serial.println(String(msg) + ": " + String(f));
   if (wifiStatus == WL_CONNECTED)
-  {
+  {  
     StaticJsonBuffer < msgBufSize > jsonBuffer;
     JsonObject& root = jsonBuffer.createObject();
     root["status"] = F("value");
@@ -598,9 +618,17 @@ void notifyClient(const char msg[]) {
 }
 
 void notifyClient(String msg) {
-
   if( Serial )
     Serial.println(msg);
+
+    if( startCountdownAt>0 )
+    {
+      FlightMsg fm;
+      msg.toCharArray(fm.msg, sizeof(fm.msg));
+      fm.time = millis(); 
+      flightMsgBuffer.addVal(fm);
+      return;
+    }
   if (wifiStatus == WL_CONNECTED)
   {
     StaticJsonBuffer < msgBufSize > jsonBuffer;
@@ -611,8 +639,7 @@ void notifyClient(String msg) {
     
     size_t written = root.printTo(msgCharBuffer, msgBufSize);
     webSocket.broadcastTXT(msgCharBuffer, written);
-    Serial.print("Notify Sent: " );
-    Serial.println(written);
+    
   }
 }
 

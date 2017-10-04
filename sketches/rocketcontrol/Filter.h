@@ -55,7 +55,7 @@ class SimpleBuffer {
      }
      
     void reset() {
-      memset(buffer, 0, sizeof(buffer));
+      memset(buffer, 0, this->size * sizeof(T));
       pos = 0;
       total = 0;
     }
